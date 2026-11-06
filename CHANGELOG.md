@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/seuros/saga_machines/compare/saga_machines/v0.1.2...saga_machines/v0.1.3) (2026-11-06)
+
+
+### Bug Fixes
+
+* crates.io keywords and categories for the core ([660b649](https://github.com/seuros/saga_machines/commit/660b649c5b0229ab715571ecb0b97270dcaacfab))
+
 ## [0.1.2](https://github.com/seuros/saga_machines/compare/saga_machines/v0.1.1...saga_machines/v0.1.2) (2026-11-06)
 
 
