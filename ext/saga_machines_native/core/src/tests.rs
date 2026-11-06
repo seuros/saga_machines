@@ -130,6 +130,6 @@ fn string_identities_hash_deterministically_and_keep_action_keys_stable() {
             Duration::ZERO,
             Duration::from_secs(1)
         ),
-        Claim::Completed
+        Claim::Completed(&())
     );
 }

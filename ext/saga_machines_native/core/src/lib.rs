@@ -85,7 +85,7 @@ impl Action {
         ledger: &mut Dedup<ActionKey, N>,
         now: Duration,
         ttl: Duration,
-    ) -> Claim {
+    ) -> Claim<'_, ()> {
         ledger.claim(self.key, now, ttl)
     }
 }
