@@ -19,3 +19,15 @@ This model does not make effects or progress durable. Persist actions before
 executing them and outcomes before advancing; provide transactional/idempotent
 effects and crash recovery externally. Compensation is not atomic rollback.
 No payloads, retry timing, wire checkpoint, or Ruby binding.
+
+`snapshot()` exports the resolved progress and attempt count; `Saga::restore`
+rebuilds the workflow after a restart and rejects progress that does not fit the
+step count. An attempt that was issued but never resolved is not carried over:
+the restored saga reissues the same action key under a fresh attempt, so a reply
+to the pre-restart attempt is rejected and the external ledger decides whether
+the effect already happened.
+
+String identities such as manifest ids map to the `u64` namespace through
+`SagaId::from_bytes` (FNV-1a, deterministic across processes), so action keys
+stay stable across restarts. The caller owns collision avoidance within one
+ledger; `SagaId::from_raw` adopts an identity allocated elsewhere.

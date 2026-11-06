@@ -3,6 +3,43 @@
 use core::time::Duration;
 use dedup_machines::{Claim, Dedup};
 
+/// Workflow identity in the dedup namespace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct SagaId(u64);
+impl SagaId {
+    /// Adopt a caller-owned identity.
+    #[must_use]
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+    /// Derive a stable identity from an external name, such as a manifest id.
+    #[must_use]
+    pub const fn from_bytes(bytes: &[u8]) -> Self {
+        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        let mut index = 0;
+        while index < bytes.len() {
+            hash ^= bytes[index] as u64;
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+            index += 1;
+        }
+        Self(hash)
+    }
+    /// Raw identity for persistence.
+    #[must_use]
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
+}
+impl From<u64> for SagaId {
+    fn from(raw: u64) -> Self {
+        Self(raw)
+    }
+}
+impl From<SagaId> for u64 {
+    fn from(id: SagaId) -> Self {
+        id.0
+    }
+}
 /// Stable operation identity across retries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ActionKey {
@@ -74,6 +111,16 @@ pub enum Progress {
     /// All required compensations finished.
     Aborted,
 }
+/// Persistable progress, excluding any unresolved issued attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Snapshot {
+    /// Workflow identity.
+    pub id: u64,
+    /// Progress at the last resolved outcome.
+    pub progress: Progress,
+    /// Attempts issued so far; a restored saga never reuses them.
+    pub attempt: u64,
+}
 /// Fixed-step sequential workflow.
 #[derive(Debug)]
 pub struct Saga<const N: usize> {
@@ -95,6 +142,35 @@ impl<const N: usize> Saga<N> {
             },
             attempt: 0,
             pending: None,
+        }
+    }
+    /// Rebuild a workflow from persisted progress; an unresolved attempt is not carried over.
+    #[must_use]
+    pub const fn restore(snapshot: Snapshot) -> Option<Self> {
+        let floor = match snapshot.progress {
+            Progress::Forward(step) if step < N => step,
+            Progress::Compensating(step) if N > 0 && step < N - 1 => step + 1,
+            Progress::Complete => N,
+            Progress::Aborted => 0,
+            _ => return None,
+        };
+        if snapshot.attempt < floor as u64 {
+            return None;
+        }
+        Some(Self {
+            id: snapshot.id,
+            progress: snapshot.progress,
+            attempt: snapshot.attempt,
+            pending: None,
+        })
+    }
+    /// Persistable progress; call after persisting each outcome.
+    #[must_use]
+    pub const fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            id: self.id,
+            progress: self.progress,
+            attempt: self.attempt,
         }
     }
     /// Issue the next action, or repeat the same unresolved attempt.
