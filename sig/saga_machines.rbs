@@ -1,0 +1,16 @@
+module SagaMachines
+  VERSION: String
+  class Action
+    def step: () -> Integer
+    def kind: () -> (:forward | :compensate)
+    def same_key?: (Action) -> bool
+  end
+  class Saga
+    def self.new: (Integer identity, steps: Integer) -> Saga
+    def steps: () -> Integer
+    def next_action: () -> Action?
+    def resolve: (Action, :success | :failure) -> bool
+    def cancel: () -> bool
+    def progress: () -> [Symbol, Integer?]
+  end
+end
