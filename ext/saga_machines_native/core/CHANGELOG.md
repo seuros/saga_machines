@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.2.2...saga-machines-v0.3.0) (2026-11-06)
+
+
+### Features
+
+* restore a saga from persisted progress ([6c98ddd](https://github.com/seuros/saga_machines/commit/6c98ddd8fc44b880dc8bf195f8d5a8e32048b423))
+
 ## [0.2.2](https://github.com/seuros/saga_machines/compare/saga-machines-v0.2.1...saga-machines-v0.2.2) (2026-11-06)
 
 
