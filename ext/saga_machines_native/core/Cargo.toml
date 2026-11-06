@@ -7,6 +7,8 @@ license.workspace = true
 description = "Sequential saga actions, reverse compensation, and stale-reply protection"
 readme = "README.md"
 exclude = ["src/**/tests.rs", "tests/"]
+keywords = ["saga", "compensation", "workflow", "idempotency", "no-std"]
+categories = ["no-std", "algorithms"]
 [dependencies]
 dedup-machines.workspace = true
 [lints]
