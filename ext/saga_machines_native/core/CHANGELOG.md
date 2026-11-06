@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/seuros/saga_machines/compare/saga-machines-v0.3.0...saga-machines-v0.3.1) (2026-11-06)
+
+
+### Bug Fixes
+
+* build against dedup-machines 0.3 ([fa36da9](https://github.com/seuros/saga_machines/commit/fa36da96c3aab595ff4daaa421a1f3e0d7c02fe9))
+
 ## [0.3.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.2.2...saga-machines-v0.3.0) (2026-11-06)
 
 
