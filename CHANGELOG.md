@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.5](https://github.com/seuros/saga_machines/compare/saga_machines/v0.1.4...saga_machines/v0.1.5) (2026-11-06)
+
+
+### Bug Fixes
+
+* build against dedup-machines 0.3 ([fa36da9](https://github.com/seuros/saga_machines/commit/fa36da96c3aab595ff4daaa421a1f3e0d7c02fe9))
+* require dedup-machines 0.3 ([e192ae3](https://github.com/seuros/saga_machines/commit/e192ae3fb7c33882826dfc56c3582cd2e685e6a3))
+
 ## [0.1.4](https://github.com/seuros/saga_machines/compare/saga_machines/v0.1.3...saga_machines/v0.1.4) (2026-11-06)
 
 
