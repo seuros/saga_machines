@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.3.1...saga-machines-v0.4.0) (2026-11-13)
+
+
+### ⚠ BREAKING CHANGES
+
+* converted to the fleet conventions. One exhaustive Refusal per crate, Result from every operation that can refuse, a refusal changes nothing, provable idempotent repeats are honoured, Ruby mirrors the core. No compatibility aliases. Requires dedup-machines >= 0.5. Saga::new takes a SagaId; claim is claim_in; restore is restored(snapshot, scope) and refuses old-style snapshots.
+
+### Features
+
+* one Refusal, scoped attempt ids, honoured repeats and a restore that accepts exactly the reachable snapshots ([1b71528](https://github.com/seuros/saga_machines/commit/1b715281fc8866b87d7086f1eeba9589aca16289))
+
 ## [0.3.1](https://github.com/seuros/saga_machines/compare/saga-machines-v0.3.0...saga-machines-v0.3.1) (2026-11-06)
 
 
