@@ -6,10 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 description = "Sequential saga actions, reverse compensation, and stale-reply protection"
 readme = "README.md"
-exclude = ["src/**/tests.rs", "tests/"]
+exclude = ["src/**/tests.rs", "src/tests/", "tests/"]
 keywords = ["saga", "compensation", "workflow", "idempotency", "no-std"]
 categories = ["no-std", "algorithms"]
 [dependencies]
 dedup-machines.workspace = true
+periscope-machines.workspace = true
 [lints]
 workspace = true

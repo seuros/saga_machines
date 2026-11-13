@@ -1,135 +1,193 @@
-#![allow(clippy::expect_used)]
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+use core::time::Duration;
+
 use super::*;
-#[test]
-fn failed_forward_steps_compensate_in_reverse_and_retries_reject_stale_replies() {
-    let mut saga = Saga::<3>::new(7);
-    let first = saga.next_action().expect("step");
-    assert!(!saga.cancel());
-    assert!(saga.resolve(first, Outcome::Success));
-    let second = saga.next_action().expect("step");
-    assert!(saga.resolve(second, Outcome::Success));
-    let third = saga.next_action().expect("step");
-    assert!(saga.resolve(third, Outcome::Failure));
-    let undo = saga.next_action().expect("compensation");
-    assert_eq!((undo.step(), undo.kind()), (1, Kind::Compensate));
-    assert!(saga.resolve(undo, Outcome::Failure));
-    let retry = saga.next_action().expect("retry");
-    assert_eq!(retry.key(), undo.key());
-    assert_ne!(retry, undo);
-    assert!(!saga.resolve(undo, Outcome::Success));
-    assert!(saga.resolve(retry, Outcome::Success));
-    let undo_first = saga.next_action().expect("compensation");
-    assert_eq!(undo_first.step(), 0);
-    assert!(saga.resolve(undo_first, Outcome::Success));
-    assert_eq!(saga.progress(), Progress::Aborted);
-    assert_eq!(saga.next_action(), None);
+
+mod ledger;
+mod model;
+mod reachable;
+mod refusals;
+mod restore;
+
+const ID: SagaId = SagaId::from_raw(7);
+
+/// Issue the next action; panics when the saga is finished or exhausted.
+fn next<const N: usize>(saga: &mut Saga<N>) -> Action {
+    saga.next_action()
+        .expect("not exhausted")
+        .expect("work remains")
 }
-#[test]
-fn cancellation_and_idempotency_have_explicit_boundaries() {
-    let mut saga = Saga::<2>::new(8);
-    let action = saga.next_action().expect("step");
-    let mut ledger = Dedup::<ActionKey, 2>::new();
-    let Claim::Acquired(claim) = action.claim(&mut ledger, Duration::ZERO, Duration::from_secs(1))
-    else {
-        panic!("claim");
-    };
-    assert_eq!(
-        action.claim(&mut ledger, Duration::ZERO, Duration::from_secs(1)),
-        Claim::InProgress
-    );
-    assert!(ledger.complete(claim, Duration::ZERO));
-    assert!(saga.resolve(action, Outcome::Success));
-    assert!(!saga.resolve(action, Outcome::Success));
-    assert!(saga.cancel());
-    assert_eq!(saga.progress(), Progress::Compensating(0));
-    assert_eq!(Saga::<0>::new(0).progress(), Progress::Complete);
+
+/// Issue the next action and resolve it with `outcome`.
+fn run<const N: usize>(saga: &mut Saga<N>, outcome: Outcome) -> Action {
+    let action = next(saga);
+    assert_eq!(saga.resolve(action, outcome), Ok(Resolution::Resolved));
+    action
 }
-#[test]
-fn restored_progress_continues_forward_and_rejects_pre_restart_replies() {
-    let mut saga = Saga::<3>::new(SagaId::from_bytes(b"manifest-1").raw());
-    let first = saga.next_action().expect("step");
-    assert!(saga.resolve(first, Outcome::Success));
-    let lost = saga.next_action().expect("step");
-    let snapshot = saga.snapshot();
-    assert_eq!(snapshot.progress, Progress::Forward(1));
-    let mut restored = Saga::<3>::restore(snapshot).expect("restore");
-    assert!(!restored.resolve(lost, Outcome::Success));
-    let reissued = restored.next_action().expect("step");
-    assert_eq!(reissued.key(), lost.key());
-    assert_ne!(reissued, lost);
-    assert!(!restored.resolve(lost, Outcome::Success));
-    assert!(restored.resolve(reissued, Outcome::Success));
-    let third = restored.next_action().expect("step");
-    assert!(restored.resolve(third, Outcome::Success));
-    assert_eq!(restored.progress(), Progress::Complete);
-    assert_eq!(restored.snapshot().attempt, 4);
+
+/// The call is refused with `refusal` and leaves the saga as it was.
+fn refused<const N: usize, T: core::fmt::Debug + PartialEq>(
+    saga: &mut Saga<N>,
+    refusal: Refusal,
+    call: impl FnOnce(&mut Saga<N>) -> Result<T, Refusal>,
+) {
+    let before = saga.clone();
+    assert_eq!(call(saga), Err(refusal));
+    assert_eq!(*saga, before);
 }
+
+/// The call is honoured with `answer` and leaves the saga as it was.
+fn repeated<const N: usize, T: core::fmt::Debug + PartialEq>(
+    saga: &mut Saga<N>,
+    answer: &T,
+    call: impl FnOnce(&mut Saga<N>) -> Result<T, Refusal>,
+) {
+    let before = saga.clone();
+    assert_eq!(call(saga).as_ref(), Ok(answer));
+    assert_eq!(*saga, before);
+}
+
 #[test]
-fn restored_progress_compensates_in_reverse() {
-    let mut saga = Saga::<3>::new(5);
-    for _ in 0..2 {
-        let action = saga.next_action().expect("step");
-        assert!(saga.resolve(action, Outcome::Success));
+fn forward_steps_complete_in_order() {
+    let mut saga = Saga::<3>::new(ID);
+    assert_eq!((saga.id(), saga.scope(), saga.issued()), (ID, 0, 0));
+    assert_eq!((saga.pending(), saga.settled()), (None, None));
+    for step in 0..3 {
+        assert_eq!(saga.progress(), Progress::Forward(step));
+        let action = next(&mut saga);
+        assert_eq!(action.key(), ActionKey::new(ID, step, Kind::Forward));
+        assert_eq!((action.step(), action.kind()), (step, Kind::Forward));
+        assert_eq!(action.attempt().raw(), step as u64 + 1);
+        assert_eq!(saga.pending(), Some(action));
+        assert_eq!(
+            saga.resolve(action, Outcome::Success),
+            Ok(Resolution::Resolved)
+        );
+        let outcome = Outcome::Success;
+        assert_eq!(saga.settled(), Some(Settlement { action, outcome }));
+        assert_eq!(saga.pending(), None);
     }
-    let failed = saga.next_action().expect("step");
-    assert!(saga.resolve(failed, Outcome::Failure));
-    let mut restored = Saga::<3>::restore(saga.snapshot()).expect("restore");
-    assert_eq!(restored.progress(), Progress::Compensating(1));
-    assert!(!restored.cancel());
-    let undo = restored.next_action().expect("compensation");
+    assert_eq!(saga.progress(), Progress::Complete);
+    assert_eq!(saga.next_action(), Ok(None));
+    assert_eq!(saga.issued(), 3);
+    assert_eq!(Saga::<0>::new(ID).progress(), Progress::Complete);
+    assert_eq!(Saga::<0>::new(ID).next_action(), Ok(None));
+}
+
+#[test]
+fn a_forward_failure_compensates_in_reverse_and_a_failed_compensation_is_retried() {
+    let mut saga = Saga::<3>::new(ID);
+    run(&mut saga, Outcome::Success);
+    run(&mut saga, Outcome::Success);
+    let failed = run(&mut saga, Outcome::Failure);
+    assert_eq!((failed.step(), failed.kind()), (2, Kind::Forward));
+    assert_eq!(saga.progress(), Progress::Compensating(1));
+    let undo = run(&mut saga, Outcome::Failure);
     assert_eq!((undo.step(), undo.kind()), (1, Kind::Compensate));
-    assert!(restored.resolve(undo, Outcome::Success));
-    let undo_first = restored.next_action().expect("compensation");
+    assert_eq!(saga.progress(), Progress::Compensating(1));
+    let retry = next(&mut saga);
+    assert_eq!(retry.key(), undo.key());
+    assert_ne!(retry.attempt(), undo.attempt());
     assert_eq!(
-        (undo_first.step(), undo_first.kind()),
-        (0, Kind::Compensate)
+        saga.resolve(retry, Outcome::Success),
+        Ok(Resolution::Resolved)
     );
-    assert!(restored.resolve(undo_first, Outcome::Success));
-    assert_eq!(restored.progress(), Progress::Aborted);
+    let last = run(&mut saga, Outcome::Success);
+    assert_eq!((last.step(), last.kind()), (0, Kind::Compensate));
+    assert_eq!(saga.progress(), Progress::Aborted);
+    assert_eq!(saga.next_action(), Ok(None));
+}
+
+#[test]
+fn next_action_repeats_the_pending_action_without_issuing() {
+    let mut saga = Saga::<2>::new(ID);
+    let action = next(&mut saga);
+    repeated(&mut saga, &Some(action), Saga::next_action);
+    assert_eq!(saga.issued(), 1);
+}
+
+#[test]
+fn cancel_unwinds_between_forward_actions() {
+    let mut fresh = Saga::<1>::new(ID);
+    assert_eq!(fresh.cancel(), Ok(Cancellation::Cancelled));
+    assert_eq!(fresh.progress(), Progress::Aborted);
+    repeated(&mut fresh, &Cancellation::AlreadyUnwinding, Saga::cancel);
+
+    let mut saga = Saga::<2>::new(ID);
+    run(&mut saga, Outcome::Success);
+    assert_eq!(saga.cancel(), Ok(Cancellation::Cancelled));
+    assert_eq!(saga.progress(), Progress::Compensating(0));
+    repeated(&mut saga, &Cancellation::AlreadyUnwinding, Saga::cancel);
+    // A pending compensation does not make the repeat a lie.
+    let undo = next(&mut saga);
+    repeated(&mut saga, &Cancellation::AlreadyUnwinding, Saga::cancel);
     assert_eq!(
-        Saga::<3>::restore(restored.snapshot()).map(|s| s.progress()),
-        Some(Progress::Aborted)
+        saga.resolve(undo, Outcome::Success),
+        Ok(Resolution::Resolved)
     );
+    assert_eq!(saga.progress(), Progress::Aborted);
 }
+
 #[test]
-fn restore_rejects_progress_outside_the_workflow() {
-    let snapshot = |progress, attempt| Snapshot {
-        id: 1,
-        progress,
-        attempt,
-    };
-    assert!(Saga::<2>::restore(snapshot(Progress::Forward(2), 2)).is_none());
-    assert!(Saga::<2>::restore(snapshot(Progress::Compensating(1), 2)).is_none());
-    assert!(Saga::<2>::restore(snapshot(Progress::Forward(1), 0)).is_none());
-    assert!(Saga::<2>::restore(snapshot(Progress::Compensating(0), 0)).is_none());
-    assert!(Saga::<2>::restore(snapshot(Progress::Complete, 1)).is_none());
-    assert!(Saga::<0>::restore(snapshot(Progress::Forward(0), 0)).is_none());
-    assert!(Saga::<0>::restore(snapshot(Progress::Complete, 0)).is_some());
-    assert!(Saga::<2>::restore(snapshot(Progress::Compensating(0), 1)).is_some());
-    assert!(Saga::<2>::restore(snapshot(Progress::Aborted, 0)).is_some());
+fn a_repeated_resolve_of_the_last_settlement_is_honoured() {
+    let mut saga = Saga::<3>::new(ID);
+    let first = run(&mut saga, Outcome::Success);
+    let again = |saga: &mut Saga<3>| saga.resolve(first, Outcome::Success);
+    repeated(&mut saga, &Resolution::AlreadyResolved, again);
+    // Still the last settlement while a newer action is pending.
+    let second = next(&mut saga);
+    repeated(&mut saga, &Resolution::AlreadyResolved, again);
+    // And after a cancel.
+    assert_eq!(
+        saga.resolve(second, Outcome::Success),
+        Ok(Resolution::Resolved)
+    );
+    assert_eq!(saga.cancel(), Ok(Cancellation::Cancelled));
+    let again = |saga: &mut Saga<3>| saga.resolve(second, Outcome::Success);
+    repeated(&mut saga, &Resolution::AlreadyResolved, again);
+    // `first` is no longer the last settlement: no history, so not provable.
+    refused(&mut saga, Refusal::Stale, |saga| {
+        saga.resolve(first, Outcome::Success)
+    });
 }
+
 #[test]
-fn string_identities_hash_deterministically_and_keep_action_keys_stable() {
+fn identities_hash_deterministically_and_rebuild_from_parts() {
     let id = SagaId::from_bytes(b"manifest-42");
     assert_eq!(id, SagaId::from_bytes(b"manifest-42"));
     assert_ne!(id, SagaId::from_bytes(b"manifest-43"));
     assert_eq!(SagaId::from_raw(id.raw()), id);
-    assert_eq!(u64::from(id), id.raw());
-    let mut before = Saga::<1>::new(id.raw());
-    let mut after = Saga::<1>::restore(before.snapshot()).expect("restore");
-    let key = before.next_action().expect("step").key();
-    assert_eq!(after.next_action().expect("step").key(), key);
-    let mut ledger = Dedup::<ActionKey, 1>::new();
-    let Claim::Acquired(claim) = ledger.claim(key, Duration::ZERO, Duration::from_secs(1)) else {
-        panic!("claim");
-    };
-    assert!(ledger.complete(claim, Duration::ZERO));
+    let mut saga = Saga::<1>::with_scope(id, 5);
+    let action = next(&mut saga);
+    assert_eq!(action.key().saga(), id);
     assert_eq!(
-        after.next_action().expect("step").claim(
-            &mut ledger,
-            Duration::ZERO,
-            Duration::from_secs(1)
-        ),
-        Claim::Completed(&())
+        (action.attempt().scope(), action.attempt().raw()),
+        (5, (5 << 48) | 1)
     );
+    // An action crosses a queue as plain data and is rebuilt on the way back.
+    let key = ActionKey::new(SagaId::from_raw(id.raw()), action.step(), action.kind());
+    let rebuilt = Action::new(key, AttemptId::from_raw(action.attempt().raw()));
+    assert_eq!(
+        saga.resolve(rebuilt, Outcome::Success),
+        Ok(Resolution::Resolved)
+    );
+}
+
+#[test]
+fn refusals_format_and_are_errors() {
+    use std::string::ToString;
+    let all = [
+        Refusal::Exhausted,
+        Refusal::Stale,
+        Refusal::Mismatch,
+        Refusal::Busy,
+        Refusal::Concluded,
+    ];
+    for (index, refusal) in all.iter().enumerate() {
+        let error: &dyn core::error::Error = refusal;
+        assert_ne!(error.to_string(), "");
+        for other in &all[index + 1..] {
+            assert_ne!(refusal.to_string(), other.to_string());
+        }
+    }
 }

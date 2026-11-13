@@ -1,16 +1,177 @@
 module SagaMachines
   VERSION: String
-  class Action
-    def step: () -> Integer
-    def kind: () -> (:forward | :compensate)
-    def same_key?: (Action) -> bool
+  # The step counts a Saga can be built with: 0, 1, 2, 3, 4, 8, 16. The core
+  # takes the count as a const generic, so each is compiled in.
+  STEPS: Array[Integer]
+
+  type kind = :forward | :compensate
+  type outcome = :success | :failure
+  # The core's `Progress`: tuple variants as Data, unit variants as symbols.
+  type progress = Forward | Compensating | :complete | :aborted
+
+  # Mirrors the core's `SagaId`. `new(raw)` is `SagaId::from_raw`.
+  class SagaId < Data
+    attr_reader raw: Integer
+    def self.new: (Integer raw) -> SagaId
+                | (raw: Integer) -> SagaId
+    # `SagaId::from_bytes`: FNV-1a over the String's bytes. TypeError for a
+    # non-String.
+    def self.from_bytes: (String name) -> SagaId
   end
+
+  # Mirrors the core's `AttemptId`. `new(raw)` is `AttemptId::from_raw`.
+  class AttemptId < Data
+    # The Integer form: the saga's scope in the top 16 bits above a sequence
+    # starting at 1.
+    attr_reader raw: Integer
+    def self.new: (Integer raw) -> AttemptId
+                | (raw: Integer) -> AttemptId
+    # The scope of the saga that issued this attempt.
+    def scope: () -> Integer
+  end
+
+  # Mirrors the core's `ActionKey`: the idempotency identity, the same for
+  # every attempt at one piece of work.
+  class ActionKey < Data
+    attr_reader saga: SagaId
+    attr_reader step: Integer
+    attr_reader kind: kind
+    def self.new: (SagaId saga, Integer step, kind kind) -> ActionKey
+                | (saga: SagaId, step: Integer, kind: kind) -> ActionKey
+  end
+
+  # Mirrors the core's `Action`: the stable key plus the attempt issued for
+  # this try, which is what Saga#resolve checks.
+  class Action < Data
+    attr_reader key: ActionKey
+    attr_reader attempt: AttemptId
+    def self.new: (ActionKey key, AttemptId attempt) -> Action
+                | (key: ActionKey, attempt: AttemptId) -> Action
+    def step: () -> Integer
+    def kind: () -> kind
+  end
+
+  # The core's `Progress::Forward(step)`.
+  class Forward < Data
+    attr_reader step: Integer
+    def self.new: (Integer step) -> Forward
+                | (step: Integer) -> Forward
+  end
+
+  # The core's `Progress::Compensating(step)`.
+  class Compensating < Data
+    attr_reader step: Integer
+    def self.new: (Integer step) -> Compensating
+                | (step: Integer) -> Compensating
+  end
+
+  # Mirrors the core's `Settlement`.
+  class Settlement < Data
+    attr_reader action: Action
+    attr_reader outcome: outcome
+    def self.new: (Action action, outcome outcome) -> Settlement
+                | (action: Action, outcome: outcome) -> Settlement
+  end
+
+  # Mirrors the core's `Snapshot`, in its field order.
+  class Snapshot < Data
+    attr_reader id: SagaId
+    attr_reader scope: Integer
+    attr_reader progress: progress
+    attr_reader issued: Integer
+    attr_reader settled: Settlement?
+    def self.new: (SagaId id, Integer scope, progress progress, Integer issued, Settlement? settled) -> Snapshot
+                | (id: SagaId, scope: Integer, progress: progress, issued: Integer, settled: Settlement?) -> Snapshot
+  end
+
+  # Private: Data values to and from the rows the native methods speak.
+  module Wire
+    def self?.expect: [T] (untyped value, Class type) -> untyped
+    def self?.action_row: (Action action) -> Array[untyped]
+    def self?.action: (Array[untyped] row) -> Action
+    def self?.progress_row: (progress progress) -> Array[untyped]
+    def self?.progress: (Symbol name, Integer? step) -> progress
+    def self?.settled_row: (Settlement? settled) -> Array[untyped]?
+    def self?.settled: (Array[untyped]? row) -> Settlement?
+    def self?.snapshot_row: (Snapshot snapshot) -> Array[untyped]
+    def self?.snapshot: (Array[untyped] row) -> Snapshot
+  end
+
   class Saga
-    def self.new: (Integer identity, steps: Integer) -> Saga
+    # Every refusal symbol, one per core `Refusal` variant, no catch-all. A
+    # refused call changed nothing. Each method below lists exactly the ones
+    # it can answer.
+    type refusal = :exhausted | :stale | :mismatch | :busy | :concluded
+
+    # Ids, steps, counts and raw attempts are Integers; a non-Integer raises
+    # TypeError, a negative or too large one RangeError. A value of the wrong
+    # class where a Data is expected raises TypeError; an unknown kind,
+    # outcome or progress symbol raises ArgumentError. A frozen saga raises
+    # FrozenError on next_action, resolve and cancel.
+
+    # A fresh saga of `steps` steps in scope zero. `steps` is one of STEPS
+    # (RangeError otherwise); zero steps is already :complete.
+    def self.new: (Integer steps, SagaId id) -> Saga
+    # A fresh saga whose attempts carry `scope`, an Integer in 0..65_535
+    # (TypeError for a non-Integer, RangeError outside the range). An attempt
+    # from a saga of another scope is always :stale.
+    def self.with_scope: (Integer steps, SagaId id, Integer scope) -> Saga
+    # The saga of `scope` saved in `snapshot`, continuing its attempt
+    # sequence. The pending action is not saved: it is :stale afterwards and
+    # its key is issued again under a fresh attempt. Raises RangeError where
+    # the core answers None, which is for every snapshot no saga of `steps`
+    # steps in `scope` can produce: another scope, an `issued` past 2**48-1,
+    # a progress that does not fit `steps`, a settlement that is not this
+    # saga's or does not lead to the progress, a settled attempt numbered
+    # below step + 1 (forward) or step + 2 (compensate), or an `issued` other
+    # than that number once the settlement finished the saga. It never
+    # answers nil.
+    def self.restored: (Integer steps, Snapshot snapshot, Integer scope) -> Saga
+    # Private: the native constructors and what the Data values read.
+    def self.native_with_scope: (Integer steps, Integer id, Integer scope) -> Saga
+    def self.native_restored: (Integer steps, Array[untyped] saved, Integer scope) -> Saga
+    def self.native_scope_of: (Integer raw) -> Integer
+    def self.native_from_bytes: (String name) -> Integer
+
     def steps: () -> Integer
-    def next_action: () -> Action?
-    def resolve: (Action, :success | :failure) -> bool
-    def cancel: () -> bool
-    def progress: () -> [Symbol, Integer?]
+    def id: () -> SagaId
+    def scope: () -> Integer
+    # How many attempts this saga has issued; also the sequence number of the
+    # latest one.
+    def issued: () -> Integer
+    def progress: () -> progress
+    # The issued action that is not resolved yet.
+    def pending: () -> Action?
+    # The last action resolved and its outcome: the one repeat #resolve can
+    # prove.
+    def settled: () -> Settlement?
+    # Everything to save; the pending action is not part of it.
+    def snapshot: () -> Snapshot
+
+    # A drain: the next Action, or nil once the saga is :complete or
+    # :aborted. While an action is pending it answers that same action and
+    # changes nothing. :exhausted when work remains but every attempt of the
+    # scope has been issued.
+    def next_action: () -> (Action | nil | :exhausted)
+    # Honoured: :resolved for the pending action, or :already_resolved for
+    # the last settled action reported with the same outcome again (a repeat
+    # that changes nothing). :stale for an attempt this saga never issued
+    # comes first; then :mismatch when the attempt is the pending or the last
+    # settled one but the key or the outcome differs; then :stale for any
+    # other attempt.
+    def resolve: (Action action, outcome outcome)
+                 -> (:resolved | :already_resolved | :stale | :mismatch)
+    # Honoured: :cancelled between forward actions, or :already_unwinding
+    # when the saga is already compensating or aborted (a repeat that changes
+    # nothing). :concluded for a complete saga; :busy while a forward action
+    # is unresolved.
+    def cancel: () -> (:cancelled | :already_unwinding | :concluded | :busy)
+
+    private
+
+    def native_next_action: () -> (Array[untyped] | nil | Symbol)
+    def native_resolve: (Array[untyped] action, Symbol outcome) -> Symbol
+    def native_snapshot: () -> Array[untyped]
+    def native_pending: () -> Array[untyped]?
   end
 end
