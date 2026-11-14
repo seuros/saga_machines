@@ -2,13 +2,15 @@
 //! otherwise, a subclass included); its fields are read natively and checked
 //! again by the core's constructors (`RangeError`), so a forged value never
 //! reaches the core and never earns a refusal symbol.
-use magnus::{Error, Ruby, Symbol, Value};
-use matryona_machines::ruby::{Symbols, exact_fields, integer, optional_fields, which};
+use magnus::{Error, Ruby, Value};
+use matryona_machines::ruby::{
+    Choice, Symbols, exact_fields, integer, optional_fields, symbol_or_fields,
+};
 use saga_machines::{Action, ActionKey, AttemptId, Progress, SagaId, Settlement, Snapshot};
 
 use crate::{
     classes::Classes,
-    names::{self, Kinds, Outcomes},
+    names::{self, Kinds, Outcomes, Progresses},
 };
 
 /// `Snapshot`'s five fields, in the core's order.
@@ -73,25 +75,15 @@ pub fn settlement_from(
 
 /// A Forward, a Compensating, `:complete` or `:aborted`.
 fn progress(ruby: &Ruby, classes: &Classes, value: Value) -> Result<Progress, Error> {
-    if let Some(name) = Symbol::from_value(value) {
-        return match name.name()?.as_ref() {
-            "complete" => Ok(Progress::Complete),
-            "aborted" => Ok(Progress::Aborted),
-            _ => Err(Error::new(
-                ruby.exception_range_error(),
-                "progress must be a Forward, a Compensating, :complete or :aborted",
-            )),
-        };
-    }
     let message = "expected a Forward, a Compensating, :complete or :aborted";
-    let (forward, compensating) = (classes.forward.get(ruby), classes.compensating.get(ruby));
-    let (make, class): (fn(usize) -> Progress, _) = match which(value, &[forward, compensating]) {
-        Some(0) => (Progress::Forward, forward),
-        Some(_) => (Progress::Compensating, compensating),
-        None => return Err(Error::new(ruby.exception_type_error(), message)),
-    };
-    let [step] = exact_fields::<1>(ruby, value, class, message)?;
-    Ok(make(names::step(step)?))
+    let steps = [classes.forward.get(ruby), classes.compensating.get(ruby)];
+    Ok(
+        match symbol_or_fields(ruby, value, Progresses, &steps, message)? {
+            Choice::Symbol(progress) => progress,
+            Choice::Struct(0, [step]) => Progress::Forward(names::step(step)?),
+            Choice::Struct(_, [step]) => Progress::Compensating(names::step(step)?),
+        },
+    )
 }
 
 /// A `Snapshot` from its five fields, through `Snapshot::new`: what

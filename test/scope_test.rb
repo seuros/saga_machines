@@ -153,8 +153,10 @@ class ScopeTest < Minitest::Test
       assert_equal 'expected a Forward, a Compensating, :complete or :aborted', error.message
     end
     assert_raises(TypeError) { Saga.restored(2, saved, '0') }
-    assert_raises(RangeError) { Saga.restored(2, saved.with(progress: :forward), 0) }
-    assert_raises(RangeError) { Saga.restored(2, saved.with(progress: :paused), 0) }
+    %i[forward compensating paused].each do |progress|
+      error = assert_raises(RangeError) { Saga.restored(2, saved.with(progress:), 0) }
+      assert_equal 'expected a Forward, a Compensating, :complete or :aborted', error.message
+    end
     assert_raises(RangeError) { Settlement.new(action(0, :forward, 1), :timeout) }
     assert_raises(TypeError) { Settlement.new(action(0, :forward, 1), 'success') }
     assert_raises(TypeError) { Settlement.new(nil, :success) }

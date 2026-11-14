@@ -1,7 +1,7 @@
 //! Ruby value conversion and the symbol names of the core's enums. Every
 //! match on a core enum lists its variants: a new one fails to compile here.
 use magnus::{Error, Ruby, Symbol, Value};
-use matryona_machines::ruby::{Symbols, integer, symbol};
+use matryona_machines::ruby::{SymbolNames, Symbols, integer, symbol};
 use saga_machines::{
     Action, AttemptId, Cancellation, Kind, Outcome, Progress, Refusal, Resolution, Settlement,
 };
@@ -24,6 +24,17 @@ matryona_machines::symbols! {
     pub Outcomes for Outcome as "outcome" {
         Success => "success",
         Failure => "failure",
+    }
+}
+
+matryona_machines::symbols! {
+    /// The core's progress as Symbols: a step's direction, or the end.
+    /// `:complete` and `:aborted` read back; a step needs its value.
+    pub Progresses for Progress as "progress" => names_only {
+        Forward(..) => "forward",
+        Compensating(..) => "compensating",
+        Complete => "complete",
+        Aborted => "aborted",
     }
 }
 
@@ -62,13 +73,11 @@ pub fn settled_row(ruby: &Ruby, settled: Settlement) -> (u64, usize, Symbol, u64
 }
 
 pub fn progress_row(ruby: &Ruby, progress: Progress) -> (Symbol, Option<usize>) {
-    let (name, step) = match progress {
-        Progress::Forward(step) => ("forward", Some(step)),
-        Progress::Compensating(step) => ("compensating", Some(step)),
-        Progress::Complete => ("complete", None),
-        Progress::Aborted => ("aborted", None),
+    let step = match progress {
+        Progress::Forward(step) | Progress::Compensating(step) => Some(step),
+        Progress::Complete | Progress::Aborted => None,
     };
-    (symbol(ruby, name), step)
+    (symbol(ruby, Progresses::name(&progress)), step)
 }
 
 pub const fn resolution(resolution: Resolution) -> &'static str {
