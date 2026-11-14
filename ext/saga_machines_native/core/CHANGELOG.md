@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.4.0...saga-machines-v0.5.0) (2026-11-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* read ids, actions and snapshots natively by exact class, issue next_action clone-then-keep
+
+### Features
+
+* read ids, actions and snapshots natively by exact class, issue next_action clone-then-keep ([f670ac0](https://github.com/seuros/saga_machines/commit/f670ac0abc79ebaa71224fc5d1f5c4162709e36b))
+
 ## [0.4.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.3.1...saga-machines-v0.4.0) (2026-11-13)
 
 
