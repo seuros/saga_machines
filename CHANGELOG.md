@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0](https://github.com/seuros/saga_machines/compare/saga_machines/v0.5.0...saga_machines/v0.6.0) (2026-11-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* read saga progress with symbol_or_fields under one message
+
+### Features
+
+* read saga progress with symbol_or_fields under one message ([7defbb6](https://github.com/seuros/saga_machines/commit/7defbb63a40a7154f879d1902499011f21434fa6))
+
 ## [0.5.0](https://github.com/seuros/saga_machines/compare/saga_machines/v0.4.0...saga_machines/v0.5.0) (2026-11-14)
 
 
