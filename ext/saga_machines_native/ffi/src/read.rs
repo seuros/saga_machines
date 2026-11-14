@@ -2,8 +2,8 @@
 //! otherwise, a subclass included); its fields are read natively and checked
 //! again by the core's constructors (`RangeError`), so a forged value never
 //! reaches the core and never earns a refusal symbol.
-use magnus::{Error, Ruby, Symbol, Value, prelude::*};
-use matryona_machines::ruby::{Symbols, exact_fields, instance_of, integer};
+use magnus::{Error, Ruby, Symbol, Value};
+use matryona_machines::ruby::{Symbols, exact_fields, integer, optional_fields, which};
 use saga_machines::{Action, ActionKey, AttemptId, Progress, SagaId, Settlement, Snapshot};
 
 use crate::{
@@ -71,12 +71,6 @@ pub fn settlement_from(
     })
 }
 
-fn settlement(ruby: &Ruby, classes: &Classes, value: Value) -> Result<Settlement, Error> {
-    let message = "expected a SagaMachines::Settlement";
-    let fields = exact_fields::<2>(ruby, value, classes.settlement.get(ruby), message)?;
-    settlement_from(ruby, classes, fields)
-}
-
 /// A Forward, a Compensating, `:complete` or `:aborted`.
 fn progress(ruby: &Ruby, classes: &Classes, value: Value) -> Result<Progress, Error> {
     if let Some(name) = Symbol::from_value(value) {
@@ -91,13 +85,10 @@ fn progress(ruby: &Ruby, classes: &Classes, value: Value) -> Result<Progress, Er
     }
     let message = "expected a Forward, a Compensating, :complete or :aborted";
     let (forward, compensating) = (classes.forward.get(ruby), classes.compensating.get(ruby));
-    let (make, class) = if instance_of(value, compensating) {
-        (
-            Progress::Compensating as fn(usize) -> Progress,
-            compensating,
-        )
-    } else {
-        (Progress::Forward as fn(usize) -> Progress, forward)
+    let (make, class): (fn(usize) -> Progress, _) = match which(value, &[forward, compensating]) {
+        Some(0) => (Progress::Forward, forward),
+        Some(_) => (Progress::Compensating, compensating),
+        None => return Err(Error::new(ruby.exception_type_error(), message)),
     };
     let [step] = exact_fields::<1>(ruby, value, class, message)?;
     Ok(make(names::step(step)?))
@@ -114,11 +105,11 @@ pub fn snapshot_from(
     let scope = integer(scope, "scope")?;
     let at = progress(ruby, classes, at)?;
     let issued = integer(issued, "issued")?;
-    let settled = if settled.is_nil() {
-        None
-    } else {
-        Some(settlement(ruby, classes, settled)?)
-    };
+    let message = "expected a SagaMachines::Settlement or nil";
+    let class = classes.settlement.get(ruby);
+    let settled = optional_fields::<2>(ruby, settled, class, message)?
+        .map(|fields| settlement_from(ruby, classes, fields))
+        .transpose()?;
     Snapshot::new(id, scope, at, issued, settled).ok_or_else(|| {
         Error::new(
             ruby.exception_range_error(),

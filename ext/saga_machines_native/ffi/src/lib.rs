@@ -7,8 +7,8 @@ mod read;
 
 use std::cell::RefCell;
 
-use magnus::{Error, IntoValue, RString, Ruby, Value, prelude::*, typed_data::Obj};
-use matryona_machines::ruby::{Symbols, integer, keep, symbol};
+use magnus::{Error, IntoValue, Ruby, Value, prelude::*, typed_data::Obj};
+use matryona_machines::ruby::{Symbols, bytes, integer, keep, symbol};
 use saga_machines::{Action, Cancellation, Outcome, Refusal, Resolution, Saga, SagaId, Snapshot};
 
 use classes::classes;
@@ -86,10 +86,10 @@ fn sized<const N: usize>(seed: Seed) -> Option<Box<dyn Policy>> {
     Some(Box::new(saga))
 }
 
-/// `SagaId::from_bytes` over the bytes of a String, in any encoding.
-fn from_bytes(name: RString) -> Result<u64, Error> {
-    let bytes: Vec<u8> = name.funcall("bytes", ())?;
-    Ok(SagaId::from_bytes(&bytes).raw())
+/// `SagaId::from_bytes` over the bytes of exactly a String, in any
+/// encoding, copied out natively: no subclass, no `to_str`, no `#bytes`.
+fn from_bytes(name: Value) -> Result<u64, Error> {
+    Ok(SagaId::from_bytes(&bytes(name, "name")?).raw())
 }
 
 fn named(ruby: &Ruby, name: &str) -> Value {

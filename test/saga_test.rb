@@ -93,6 +93,21 @@ class SagaTest < Minitest::Test
     [5, 7, 17, 2**64 - 1].each { |steps| assert_raises(RangeError) { Saga.new(steps, ID) } }
   end
 
+  # The name is read natively as exactly a String: no subclass, no `to_str`,
+  # and a redefined `#bytes` is never called.
+  def test_from_bytes_takes_exactly_a_string
+    id = SagaId.from_bytes('manifest-42')
+    subclass = Class.new(String)
+    stringy = Object.new.tap { |o| o.define_singleton_method(:to_str) { 'manifest-42' } }
+    [subclass.new('manifest-42'), stringy, :manifest, nil].each do |name|
+      error = assert_raises(TypeError, name.inspect) { SagaId.from_bytes(name) }
+      assert_equal 'name must be a String', error.message
+    end
+    lying = +'manifest-42'
+    lying.define_singleton_method(:bytes) { 'other'.bytes }
+    assert_equal id, SagaId.from_bytes(lying)
+  end
+
   def test_identities
     id = SagaId.from_bytes('manifest-42')
     assert_equal id, SagaId.from_bytes('manifest-42')

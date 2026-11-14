@@ -12,7 +12,9 @@ module SagaMachines
   # `SagaId::from_raw`.
   SagaId = Data.define(:raw) do
     # `SagaId::from_bytes`: a stable identity from an external name (FNV-1a
-    # over the String's bytes, the same in every process).
+    # over the String's bytes, the same in every process). `name` must be
+    # exactly a String (TypeError otherwise, a subclass included); its bytes
+    # are read natively, never through `#bytes`.
     def self.from_bytes(name) = new(Saga.__send__(:native_from_bytes, name))
 
     def initialize(raw:)

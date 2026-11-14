@@ -146,7 +146,12 @@ class ScopeTest < Minitest::Test
     assert_raises(TypeError) { Saga.restored(2, saved.with(issued: nil), 0) }
     assert_raises(TypeError) { Saga.restored(2, saved.with(progress: 0), 0) }
     assert_raises(TypeError) { Saga.restored(2, saved.with(progress: Forward.new(nil)), 0) }
-    assert_raises(TypeError) { Saga.restored(2, saved.with(settled: [1, :success]), 0) }
+    error = assert_raises(TypeError) { Saga.restored(2, saved.with(settled: [1, :success]), 0) }
+    assert_equal 'expected a SagaMachines::Settlement or nil', error.message
+    [0, Forward, action(0, :forward, 1)].each do |progress|
+      error = assert_raises(TypeError) { Snapshot.new(ID, 0, progress, 0, nil) }
+      assert_equal 'expected a Forward, a Compensating, :complete or :aborted', error.message
+    end
     assert_raises(TypeError) { Saga.restored(2, saved, '0') }
     assert_raises(RangeError) { Saga.restored(2, saved.with(progress: :forward), 0) }
     assert_raises(RangeError) { Saga.restored(2, saved.with(progress: :paused), 0) }

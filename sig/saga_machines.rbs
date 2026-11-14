@@ -20,8 +20,8 @@ module SagaMachines
     attr_reader raw: Integer
     def self.new: (Integer raw) -> SagaId
                 | (raw: Integer) -> SagaId
-    # `SagaId::from_bytes`: FNV-1a over the String's bytes. TypeError for a
-    # non-String.
+    # `SagaId::from_bytes`: FNV-1a over the String's bytes. TypeError for
+    # anything but exactly a String, a subclass or a `to_str` object included.
     def self.from_bytes: (String name) -> SagaId
   end
 
