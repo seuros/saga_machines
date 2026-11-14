@@ -22,7 +22,7 @@ fn a_restored_saga_equals_the_one_it_was_saved_from() {
     // The last settlement survived, so its repeat is still provable.
     let again = |saga: &mut Saga<3>| saga.resolve(first, Outcome::Success);
     repeated(&mut restored, &Resolution::AlreadyResolved, again);
-    refused(&mut restored, Refusal::Mismatch, |saga| {
+    refuses(&mut restored, Refusal::Mismatch, |saga| {
         saga.resolve(first, Outcome::Failure)
     });
 }
@@ -34,13 +34,13 @@ fn a_pending_attempt_is_not_carried_over_and_is_never_reissued() {
     let lost = next(&mut saga);
     let mut restored = Saga::<3>::restored(saga.snapshot(), 4).expect("sound");
     assert_eq!((restored.pending(), restored.issued()), (None, 2));
-    refused(&mut restored, Refusal::Stale, |saga| {
+    refuses(&mut restored, Refusal::Stale, |saga| {
         saga.resolve(lost, Outcome::Success)
     });
     let reissued = next(&mut restored);
     assert_eq!(reissued.key(), lost.key());
     assert_eq!(reissued.attempt().raw(), (4 << 48) | 3);
-    refused(&mut restored, Refusal::Stale, |saga| {
+    refuses(&mut restored, Refusal::Stale, |saga| {
         saga.resolve(lost, Outcome::Success)
     });
     assert_eq!(

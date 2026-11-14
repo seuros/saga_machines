@@ -2,98 +2,83 @@
 //! otherwise, a subclass included); its fields are read natively and checked
 //! again by the core's constructors (`RangeError`), so a forged value never
 //! reaches the core and never earns a refusal symbol.
-use magnus::{Error, RStruct, Ruby, Symbol, TryConvert, Value, prelude::*};
+use magnus::{Error, Ruby, Symbol, Value, prelude::*};
+use matryona_machines::ruby::{Symbols, exact_fields, instance_of, integer};
 use saga_machines::{Action, ActionKey, AttemptId, Progress, SagaId, Settlement, Snapshot};
 
 use crate::{
-    classes::{Classes, exact, is_instance_of},
-    names::{self, Number, Scope, wrong_type},
+    classes::Classes,
+    names::{self, Kinds, Outcomes},
 };
 
 /// `Snapshot`'s five fields, in the core's order.
-pub type SnapshotFields = (Value, Value, Value, Value, Value);
+pub type SnapshotFields = [Value; 5];
 
-fn symbol(ruby: &Ruby, value: Value) -> Result<Symbol, Error> {
-    Symbol::from_value(value).ok_or_else(|| wrong_type(ruby, "expected a Symbol"))
-}
-
-fn step(ruby: &Ruby, value: Value) -> Result<usize, Error> {
-    names::step(ruby, Number::try_convert(value)?)
-}
-
-pub fn saga_id(ruby: &Ruby, classes: Classes, value: Value) -> Result<SagaId, Error> {
+pub fn saga_id(ruby: &Ruby, classes: &Classes, value: Value) -> Result<SagaId, Error> {
     let message = "expected a SagaMachines::SagaId";
-    let fields = exact(ruby, value, classes.saga_id, message)?;
-    Ok(SagaId::from_raw(fields.aref::<_, Number>(0)?.0))
+    let [raw] = exact_fields::<1>(ruby, value, classes.saga_id.get(ruby), message)?;
+    integer(raw, "raw").map(SagaId::from_raw)
 }
 
-pub fn attempt_id(ruby: &Ruby, classes: Classes, value: Value) -> Result<AttemptId, Error> {
+pub fn attempt_id(ruby: &Ruby, classes: &Classes, value: Value) -> Result<AttemptId, Error> {
     let message = "expected a SagaMachines::AttemptId";
-    let fields = exact(ruby, value, classes.attempt_id, message)?;
-    names::attempt(ruby, fields.aref(0)?)
+    let [raw] = exact_fields::<1>(ruby, value, classes.attempt_id.get(ruby), message)?;
+    names::attempt(ruby, raw)
 }
 
 /// An `ActionKey` from its three fields: what `ActionKey.new` checks.
 pub fn key_from(
     ruby: &Ruby,
-    classes: Classes,
-    (saga, at, kind): (Value, Value, Value),
+    classes: &Classes,
+    [saga, at, kind]: [Value; 3],
 ) -> Result<ActionKey, Error> {
     let saga = saga_id(ruby, classes, saga)?;
-    let kind = names::kind(ruby, symbol(ruby, kind)?)?;
-    Ok(ActionKey::new(saga, step(ruby, at)?, kind))
+    let kind = Kinds::parse(ruby, kind)?;
+    Ok(ActionKey::new(saga, names::step(at)?, kind))
 }
 
-fn key(ruby: &Ruby, classes: Classes, value: Value) -> Result<ActionKey, Error> {
+fn key(ruby: &Ruby, classes: &Classes, value: Value) -> Result<ActionKey, Error> {
     let message = "expected a SagaMachines::ActionKey";
-    let fields = exact(ruby, value, classes.action_key, message)?;
-    key_from(
-        ruby,
-        classes,
-        (fields.aref(0)?, fields.aref(1)?, fields.aref(2)?),
-    )
+    let fields = exact_fields::<3>(ruby, value, classes.action_key.get(ruby), message)?;
+    key_from(ruby, classes, fields)
 }
 
 /// An `Action` from its two fields: what `Action.new` checks.
 pub fn action_from(
     ruby: &Ruby,
-    classes: Classes,
-    (action_key, attempt): (Value, Value),
+    classes: &Classes,
+    [action_key, attempt]: [Value; 2],
 ) -> Result<Action, Error> {
     let action_key = key(ruby, classes, action_key)?;
     Ok(Action::new(action_key, attempt_id(ruby, classes, attempt)?))
 }
 
-pub fn action(ruby: &Ruby, classes: Classes, value: Value) -> Result<Action, Error> {
-    let fields = exact(
-        ruby,
-        value,
-        classes.action,
-        "expected a SagaMachines::Action",
-    )?;
-    action_from(ruby, classes, (fields.aref(0)?, fields.aref(1)?))
+pub fn action(ruby: &Ruby, classes: &Classes, value: Value) -> Result<Action, Error> {
+    let message = "expected a SagaMachines::Action";
+    let fields = exact_fields::<2>(ruby, value, classes.action.get(ruby), message)?;
+    action_from(ruby, classes, fields)
 }
 
 /// A `Settlement` from its two fields: what `Settlement.new` checks.
 pub fn settlement_from(
     ruby: &Ruby,
-    classes: Classes,
-    (settled, outcome): (Value, Value),
+    classes: &Classes,
+    [settled, outcome]: [Value; 2],
 ) -> Result<Settlement, Error> {
     Ok(Settlement {
         action: action(ruby, classes, settled)?,
-        outcome: names::outcome(ruby, symbol(ruby, outcome)?)?,
+        outcome: Outcomes::parse(ruby, outcome)?,
     })
 }
 
-fn settlement(ruby: &Ruby, classes: Classes, value: Value) -> Result<Settlement, Error> {
+fn settlement(ruby: &Ruby, classes: &Classes, value: Value) -> Result<Settlement, Error> {
     let message = "expected a SagaMachines::Settlement";
-    let fields = exact(ruby, value, classes.settlement, message)?;
-    settlement_from(ruby, classes, (fields.aref(0)?, fields.aref(1)?))
+    let fields = exact_fields::<2>(ruby, value, classes.settlement.get(ruby), message)?;
+    settlement_from(ruby, classes, fields)
 }
 
 /// A Forward, a Compensating, `:complete` or `:aborted`.
-fn progress(ruby: &Ruby, classes: Classes, value: Value) -> Result<Progress, Error> {
+fn progress(ruby: &Ruby, classes: &Classes, value: Value) -> Result<Progress, Error> {
     if let Some(name) = Symbol::from_value(value) {
         return match name.name()?.as_ref() {
             "complete" => Ok(Progress::Complete),
@@ -104,40 +89,37 @@ fn progress(ruby: &Ruby, classes: Classes, value: Value) -> Result<Progress, Err
             )),
         };
     }
-    let stepped = |make: fn(usize) -> Progress| {
-        let fields = RStruct::from_value(value)
-            .ok_or_else(|| wrong_type(ruby, "expected a Forward or a Compensating"))?;
-        Ok(make(step(ruby, fields.aref(0)?)?))
-    };
-    if is_instance_of(value, classes.forward) {
-        stepped(Progress::Forward)
-    } else if is_instance_of(value, classes.compensating) {
-        stepped(Progress::Compensating)
+    let message = "expected a Forward, a Compensating, :complete or :aborted";
+    let (forward, compensating) = (classes.forward.get(ruby), classes.compensating.get(ruby));
+    let (make, class) = if instance_of(value, compensating) {
+        (
+            Progress::Compensating as fn(usize) -> Progress,
+            compensating,
+        )
     } else {
-        Err(wrong_type(
-            ruby,
-            "expected a Forward, a Compensating, :complete or :aborted",
-        ))
-    }
+        (Progress::Forward as fn(usize) -> Progress, forward)
+    };
+    let [step] = exact_fields::<1>(ruby, value, class, message)?;
+    Ok(make(names::step(step)?))
 }
 
 /// A `Snapshot` from its five fields, through `Snapshot::new`: what
 /// `Snapshot.new` checks.
 pub fn snapshot_from(
     ruby: &Ruby,
-    classes: Classes,
-    (id, scope, at, issued, settled): SnapshotFields,
+    classes: &Classes,
+    [id, scope, at, issued, settled]: SnapshotFields,
 ) -> Result<Snapshot, Error> {
     let id = saga_id(ruby, classes, id)?;
-    let scope = Scope::try_convert(scope)?;
+    let scope = integer(scope, "scope")?;
     let at = progress(ruby, classes, at)?;
-    let issued = Number::try_convert(issued)?;
+    let issued = integer(issued, "issued")?;
     let settled = if settled.is_nil() {
         None
     } else {
         Some(settlement(ruby, classes, settled)?)
     };
-    Snapshot::new(id, scope.0, at, issued.0, settled).ok_or_else(|| {
+    Snapshot::new(id, scope, at, issued, settled).ok_or_else(|| {
         Error::new(
             ruby.exception_range_error(),
             "issued must be in 0..2**48-1 and the settlement this saga's, of its scope, \
@@ -146,13 +128,8 @@ pub fn snapshot_from(
     })
 }
 
-pub fn snapshot(ruby: &Ruby, classes: Classes, value: Value) -> Result<Snapshot, Error> {
+pub fn snapshot(ruby: &Ruby, classes: &Classes, value: Value) -> Result<Snapshot, Error> {
     let message = "expected a SagaMachines::Snapshot";
-    let fields = exact(ruby, value, classes.snapshot, message)?;
-    let read = |index: usize| fields.aref::<_, Value>(index);
-    snapshot_from(
-        ruby,
-        classes,
-        (read(0)?, read(1)?, read(2)?, read(3)?, read(4)?),
-    )
+    let fields = exact_fields::<5>(ruby, value, classes.snapshot.get(ruby), message)?;
+    snapshot_from(ruby, classes, fields)
 }

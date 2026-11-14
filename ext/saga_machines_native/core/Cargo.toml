@@ -12,5 +12,7 @@ categories = ["no-std", "algorithms"]
 [dependencies]
 dedup-machines.workspace = true
 periscope-machines.workspace = true
+[dev-dependencies]
+matryona-machines = { workspace = true, features = ["testing"] }
 [lints]
 workspace = true

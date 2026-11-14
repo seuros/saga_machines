@@ -74,14 +74,14 @@ fn the_ledgers_refusals_come_back_unchanged() {
     let second = next(&mut saga);
     let late = Duration::from_secs(5);
     assert!(first.claim_in(&mut ledger, late, TTL).is_ok());
-    let before = ledger.clone();
-    let full = second.claim_in(&mut ledger, late, TTL).err();
-    assert_eq!(full, Some(LedgerRefusal::Full));
-    let regressed = first.claim_in(&mut ledger, Duration::ZERO, TTL).err();
-    assert_eq!(regressed, Some(LedgerRefusal::TimeRegression));
-    let dead = first.claim_in(&mut ledger, late, Duration::ZERO).err();
-    assert_eq!(dead, Some(LedgerRefusal::InvalidDuration));
-    let overflow = first.claim_in(&mut ledger, late, Duration::MAX).err();
-    assert_eq!(overflow, Some(LedgerRefusal::Overflow));
-    assert_eq!(ledger, before);
+    let claim = |action: Action, now, ttl| {
+        move |ledger: &mut Dedup<ActionKey, 1>| action.claim_in(ledger, now, ttl).map(drop)
+    };
+    refuses(&mut ledger, LedgerRefusal::Full, claim(second, late, TTL));
+    let regressed = claim(first, Duration::ZERO, TTL);
+    refuses(&mut ledger, LedgerRefusal::TimeRegression, regressed);
+    let dead = claim(first, late, Duration::ZERO);
+    refuses(&mut ledger, LedgerRefusal::InvalidDuration, dead);
+    let overflow = claim(first, late, Duration::MAX);
+    refuses(&mut ledger, LedgerRefusal::Overflow, overflow);
 }

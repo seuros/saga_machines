@@ -69,6 +69,48 @@ class SealTest < Minitest::Test
     assert_equal snapshot, Saga.restored(2, snapshot, 4).snapshot
   end
 
+  # A singleton class opened on a genuine value does not change what it is,
+  # a clone of one included, wherever the extension reads it back.
+  def test_an_opened_singleton_class_is_still_the_gems_value
+    opened = ->(value) { value.clone.tap(&:singleton_class) }
+    saga = Saga.with_scope(2, opened.(ID), 4)
+    action = saga.next_action
+    key = ActionKey.new(opened.(action.key.saga), action.key.step, action.key.kind)
+    reported = opened.(Action.new(opened.(key), opened.(action.attempt)))
+    assert_equal :resolved, saga.resolve(reported, :success)
+    snapshot = saga.snapshot
+    settled = Settlement.new(opened.(snapshot.settled.action), snapshot.settled.outcome)
+    rebuilt = Snapshot.new(opened.(snapshot.id), snapshot.scope, opened.(snapshot.progress), snapshot.issued,
+                           opened.(settled))
+    assert_equal snapshot, Saga.restored(2, opened.(rebuilt), 4).snapshot
+  end
+
+  # The extension reads every value's fields from the struct, never through
+  # its readers: a redefined reader is ignored, and cannot re-enter.
+  def test_a_redefined_reader_is_ignored
+    saga = Saga.with_scope(2, ID, 4)
+    action = saga.next_action
+    readers = { SagaId => %i[raw], AttemptId => %i[raw], ActionKey => %i[saga step kind], Action => %i[key attempt],
+                Settlement => %i[action outcome], Forward => %i[step],
+                Snapshot => %i[id scope progress issued settled] }
+    originals = readers.flat_map { |klass, names| names.map { [klass, it, klass.instance_method(it)] } }
+    begin
+      originals.each { |klass, name, _| klass.define_method(name) { raise "#{name} reader ran" } }
+      resolved = saga.resolve(action, :success)
+    ensure
+      originals.each { |klass, name, reader| klass.define_method(name, reader) }
+    end
+    assert_equal :resolved, resolved
+    snapshot = saga.snapshot
+    begin
+      originals.each { |klass, name, _| klass.define_method(name) { raise "#{name} reader ran" } }
+      restored = Saga.restored(2, snapshot, 4)
+    ensure
+      originals.each { |klass, name, reader| klass.define_method(name, reader) }
+    end
+    assert_equal snapshot, restored.snapshot
+  end
+
   # The classes the extension resolved at init are pinned: after a
   # compaction that moves what it can, every path that builds or reads a
   # value still finds them.

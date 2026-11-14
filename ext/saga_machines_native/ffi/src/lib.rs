@@ -7,11 +7,11 @@ mod read;
 
 use std::cell::RefCell;
 
-use magnus::{Error, IntoValue, RString, Ruby, Symbol, Value, prelude::*, typed_data::Obj};
+use magnus::{Error, IntoValue, RString, Ruby, Value, prelude::*, typed_data::Obj};
+use matryona_machines::ruby::{Symbols, integer, keep, symbol};
 use saga_machines::{Action, Cancellation, Outcome, Refusal, Resolution, Saga, SagaId, Snapshot};
 
-use classes::{classes, keep};
-use names::{Number, Scope};
+use classes::classes;
 
 /// The step counts compiled in: the core takes the count as a const generic,
 /// so each is its own exact instantiation. No padding.
@@ -92,8 +92,8 @@ fn from_bytes(name: RString) -> Result<u64, Error> {
     Ok(SagaId::from_bytes(&bytes).raw())
 }
 
-fn symbol(ruby: &Ruby, name: &str) -> Value {
-    ruby.to_symbol(name).as_value()
+fn named(ruby: &Ruby, name: &str) -> Value {
+    symbol(ruby, name).as_value()
 }
 
 #[magnus::wrap(class = "SagaMachines::Saga", free_immediately, size)]
@@ -105,8 +105,8 @@ struct Wrapper {
 impl Wrapper {
     /// A restoring constructor has no refusal symbol to answer with: saved
     /// state the core refuses raises `RangeError`, like an unsupported count.
-    fn build(ruby: &Ruby, steps: Number, seed: Seed) -> Result<Self, Error> {
-        let core = match steps.0 {
+    fn build(ruby: &Ruby, steps: u64, seed: Seed) -> Result<Self, Error> {
+        let core = match steps {
             0 => sized::<0>(seed),
             1 => sized::<1>(seed),
             2 => sized::<2>(seed),
@@ -133,15 +133,17 @@ impl Wrapper {
     }
 
     /// `id` must be exactly a `SagaId`.
-    fn with_scope(ruby: &Ruby, steps: Number, id: Value, scope: Scope) -> Result<Self, Error> {
+    fn with_scope(ruby: &Ruby, steps: Value, id: Value, scope: Value) -> Result<Self, Error> {
+        let (steps, scope) = (integer(steps, "steps")?, integer(scope, "scope")?);
         let id = read::saga_id(ruby, classes(ruby)?, id)?;
-        Self::build(ruby, steps, Seed::Fresh(id, scope.0))
+        Self::build(ruby, steps, Seed::Fresh(id, scope))
     }
 
     /// `saved` must be exactly a `Snapshot`, read natively and checked again.
-    fn restored(ruby: &Ruby, steps: Number, saved: Value, scope: Scope) -> Result<Self, Error> {
+    fn restored(ruby: &Ruby, steps: Value, saved: Value, scope: Value) -> Result<Self, Error> {
+        let (steps, scope) = (integer(steps, "steps")?, integer(scope, "scope")?);
         let snapshot = read::snapshot(ruby, classes(ruby)?, saved)?;
-        Self::build(ruby, steps, Seed::Saved(snapshot, scope.0))
+        Self::build(ruby, steps, Seed::Saved(snapshot, scope))
     }
 
     /// An `Action`, `nil` when nothing is left, or a refusal symbol. Decided
@@ -150,13 +152,17 @@ impl Wrapper {
     /// issued.
     fn next_action(ruby: &Ruby, this: Obj<Self>) -> Result<Value, Error> {
         let classes = classes(ruby)?;
-        keep(ruby, this.as_value(), &this.core, |core| {
-            match core.0.next_action() {
+        keep(
+            ruby,
+            this,
+            &this.core,
+            |core| core.0.next_action(),
+            |next| match next {
                 Ok(Some(action)) => hooks::action(ruby, classes, action),
                 Ok(None) => Ok(ruby.qnil().as_value()),
-                Err(why) => Ok(symbol(ruby, names::refusal(why))),
-            }
-        })
+                Err(why) => Ok(names::Refusals::symbol(ruby, why).as_value()),
+            },
+        )
     }
 
     /// `action` must be exactly an `Action`, read natively and checked again.
@@ -164,15 +170,15 @@ impl Wrapper {
         ruby: &Ruby,
         this: Obj<Self>,
         action: Value,
-        outcome: Symbol,
+        outcome: Value,
     ) -> Result<Value, Error> {
         this.check_frozen()?;
         let action = read::action(ruby, classes(ruby)?, action)?;
-        let outcome = names::outcome(ruby, outcome)?;
+        let outcome = names::Outcomes::parse(ruby, outcome)?;
         let answer = this.core.borrow_mut().0.resolve(action, outcome);
         Ok(match answer {
-            Ok(resolution) => symbol(ruby, names::resolution(resolution)),
-            Err(why) => symbol(ruby, names::refusal(why)),
+            Ok(resolution) => named(ruby, names::resolution(resolution)),
+            Err(why) => names::Refusals::symbol(ruby, why).as_value(),
         })
     }
 
@@ -180,8 +186,8 @@ impl Wrapper {
         this.check_frozen()?;
         let answer = this.core.borrow_mut().0.cancel();
         Ok(match answer {
-            Ok(cancellation) => symbol(ruby, names::cancellation(cancellation)),
-            Err(why) => symbol(ruby, names::refusal(why)),
+            Ok(cancellation) => named(ruby, names::cancellation(cancellation)),
+            Err(why) => names::Refusals::symbol(ruby, why).as_value(),
         })
     }
 

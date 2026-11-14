@@ -2,6 +2,8 @@
 //! every honoured repeat is compared against a clone taken before the call.
 use std::vec::Vec;
 
+use matryona_machines::testing::XorShift64;
+
 use super::*;
 
 const STEPS: usize = 4;
@@ -91,24 +93,9 @@ impl Model {
     }
 }
 
-struct Rng(u64);
-
-impl Rng {
-    const fn next(&mut self) -> u64 {
-        self.0 ^= self.0 << 13;
-        self.0 ^= self.0 >> 7;
-        self.0 ^= self.0 << 17;
-        self.0
-    }
-
-    const fn below(&mut self, bound: u64) -> u64 {
-        self.next() % bound
-    }
-}
-
 /// An action to report: mostly one the saga issued, sometimes a forgery.
-fn pick(rng: &mut Rng, saga: &Saga<STEPS>, history: &[Action]) -> Action {
-    let issued = |rng: &mut Rng| {
+fn pick(rng: &mut XorShift64, saga: &Saga<STEPS>, history: &[Action]) -> Action {
+    let issued = |rng: &mut XorShift64| {
         let index = usize::try_from(rng.below(history.len() as u64)).expect("small");
         history[index]
     };
@@ -130,7 +117,12 @@ fn pick(rng: &mut Rng, saga: &Saga<STEPS>, history: &[Action]) -> Action {
 }
 
 /// One random call on both; `true` when it was honoured and changed state.
-fn step(rng: &mut Rng, saga: &mut Saga<STEPS>, model: &mut Model, history: &mut Vec<Action>) {
+fn step(
+    rng: &mut XorShift64,
+    saga: &mut Saga<STEPS>,
+    model: &mut Model,
+    history: &mut Vec<Action>,
+) {
     let before = saga.clone();
     let unchanged = match rng.below(8) {
         0..=2 => {
@@ -179,7 +171,7 @@ fn step(rng: &mut Rng, saga: &mut Saga<STEPS>, model: &mut Model, history: &mut 
 
 #[test]
 fn random_runs_agree_with_the_model() {
-    let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+    let mut rng = XorShift64::new(0x9E37_79B9_7F4A_7C15);
     let (mut complete, mut aborted) = (0, 0);
     for _ in 0..400 {
         let mut saga = Saga::<STEPS>::with_scope(ID, SCOPE);

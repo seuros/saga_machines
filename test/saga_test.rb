@@ -143,6 +143,17 @@ class SagaTest < Minitest::Test
     assert_equal [Forward.new(0), action, 1], [saga.progress, saga.pending, saga.issued]
   end
 
+  # Frozen is checked before any argument is read: a frozen saga handed a
+  # malformed argument raises FrozenError, as Ruby's own core methods do.
+  def test_frozen_is_checked_before_the_arguments
+    saga = Saga.new(1, ID)
+    action = saga.next_action
+    saga.freeze
+    assert_raises(FrozenError) { saga.resolve(nil, :success) }
+    assert_raises(FrozenError) { saga.resolve(action, 'success') }
+    assert_raises(FrozenError) { saga.resolve(action, :unknown) }
+  end
+
   def test_gc_stress
     previous = GC.stress
     GC.stress = true

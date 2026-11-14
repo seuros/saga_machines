@@ -1,5 +1,7 @@
 use core::time::Duration;
 
+use matryona_machines::testing::{refuses, unchanged};
+
 use super::*;
 
 mod ledger;
@@ -49,26 +51,13 @@ fn run<const N: usize>(saga: &mut Saga<N>, outcome: Outcome) -> Action {
     action
 }
 
-/// The call is refused with `refusal` and leaves the saga as it was.
-fn refused<const N: usize, T: core::fmt::Debug + PartialEq>(
-    saga: &mut Saga<N>,
-    refusal: Refusal,
-    call: impl FnOnce(&mut Saga<N>) -> Result<T, Refusal>,
-) {
-    let before = saga.clone();
-    assert_eq!(call(saga), Err(refusal));
-    assert_eq!(*saga, before);
-}
-
 /// The call is honoured with `answer` and leaves the saga as it was.
 fn repeated<const N: usize, T: core::fmt::Debug + PartialEq>(
     saga: &mut Saga<N>,
     answer: &T,
     call: impl FnOnce(&mut Saga<N>) -> Result<T, Refusal>,
 ) {
-    let before = saga.clone();
-    assert_eq!(call(saga).as_ref(), Ok(answer));
-    assert_eq!(*saga, before);
+    assert_eq!(unchanged(saga, call).as_ref(), Ok(answer));
 }
 
 #[test]
@@ -170,7 +159,7 @@ fn a_repeated_resolve_of_the_last_settlement_is_honoured() {
     let again = |saga: &mut Saga<3>| saga.resolve(second, Outcome::Success);
     repeated(&mut saga, &Resolution::AlreadyResolved, again);
     // `first` is no longer the last settlement: no history, so not provable.
-    refused(&mut saga, Refusal::Stale, |saga| {
+    refuses(&mut saga, Refusal::Stale, |saga| {
         saga.resolve(first, Outcome::Success)
     });
 }

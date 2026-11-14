@@ -23,10 +23,10 @@ fn exhaustion_is_a_refusal_and_not_the_terminal_answer() {
     let mut stuck = Saga::<2>::restored(snapshot, 3).expect("sound");
     run(&mut stuck, Outcome::Success);
     assert_eq!(stuck.progress(), Progress::Forward(1));
-    refused(&mut stuck, Refusal::Exhausted, Saga::next_action);
+    refuses(&mut stuck, Refusal::Exhausted, Saga::next_action);
     // Cancelling is still possible; the compensation then cannot be issued.
     assert_eq!(stuck.cancel(), Ok(Cancellation::Cancelled));
-    refused(&mut stuck, Refusal::Exhausted, Saga::next_action);
+    refuses(&mut stuck, Refusal::Exhausted, Saga::next_action);
 }
 
 #[test]
@@ -37,15 +37,15 @@ fn an_attempt_the_saga_never_issued_is_stale() {
     let from_far = next(&mut far);
     // Same saga id, same key, same sequence: only the scope tells them apart.
     assert_eq!(from_near.key(), from_far.key());
-    refused(&mut far, Refusal::Stale, |saga| {
+    refuses(&mut far, Refusal::Stale, |saga| {
         saga.resolve(from_near, Outcome::Success)
     });
-    refused(&mut near, Refusal::Stale, |saga| {
+    refuses(&mut near, Refusal::Stale, |saga| {
         saga.resolve(from_far, Outcome::Success)
     });
     for raw in [(1 << 48) | 2, (2 << 48) | 1, u64::MAX] {
         let forged = Action::new(from_near.key(), attempt(raw));
-        refused(&mut near, Refusal::Stale, |saga| {
+        refuses(&mut near, Refusal::Stale, |saga| {
             saga.resolve(forged, Outcome::Success)
         });
     }
@@ -61,20 +61,20 @@ fn an_attempt_that_is_neither_pending_nor_last_settled_is_stale() {
     let first = run(&mut saga, Outcome::Success);
     let second = run(&mut saga, Outcome::Failure);
     for outcome in [Outcome::Success, Outcome::Failure] {
-        refused(&mut saga, Refusal::Stale, |saga| {
+        refuses(&mut saga, Refusal::Stale, |saga| {
             saga.resolve(first, outcome)
         });
     }
     let undo = run(&mut saga, Outcome::Failure);
     let retry = next(&mut saga);
     assert_eq!(retry.key(), undo.key());
-    refused(&mut saga, Refusal::Stale, |saga| {
+    refuses(&mut saga, Refusal::Stale, |saga| {
         saga.resolve(second, Outcome::Failure)
     });
     // The failed compensation is the last settlement, its retry the pending one.
     let again = |saga: &mut Saga<3>| saga.resolve(undo, Outcome::Failure);
     repeated(&mut saga, &Resolution::AlreadyResolved, again);
-    refused(&mut saga, Refusal::Mismatch, |saga| {
+    refuses(&mut saga, Refusal::Mismatch, |saga| {
         saga.resolve(undo, Outcome::Success)
     });
 }
@@ -91,7 +91,7 @@ fn a_contradicting_report_is_a_mismatch() {
     ];
     for key in keys {
         let forged = Action::new(key, pending.attempt());
-        refused(&mut saga, Refusal::Mismatch, |saga| {
+        refuses(&mut saga, Refusal::Mismatch, |saga| {
             saga.resolve(forged, Outcome::Success)
         });
     }
@@ -100,11 +100,11 @@ fn a_contradicting_report_is_a_mismatch() {
         Ok(Resolution::Resolved)
     );
     // The last settlement with another outcome, or under another key.
-    refused(&mut saga, Refusal::Mismatch, |saga| {
+    refuses(&mut saga, Refusal::Mismatch, |saga| {
         saga.resolve(pending, Outcome::Failure)
     });
     let forged = Action::new(keys[0], pending.attempt());
-    refused(&mut saga, Refusal::Mismatch, |saga| {
+    refuses(&mut saga, Refusal::Mismatch, |saga| {
         saga.resolve(forged, Outcome::Success)
     });
     assert_eq!(saga.progress(), Progress::Forward(1));
@@ -114,11 +114,11 @@ fn a_contradicting_report_is_a_mismatch() {
 fn cancel_is_refused_while_a_forward_action_is_pending_and_once_complete() {
     let mut saga = Saga::<1>::new(ID);
     let action = next(&mut saga);
-    refused(&mut saga, Refusal::Busy, Saga::cancel);
+    refuses(&mut saga, Refusal::Busy, Saga::cancel);
     assert_eq!(
         saga.resolve(action, Outcome::Success),
         Ok(Resolution::Resolved)
     );
-    refused(&mut saga, Refusal::Concluded, Saga::cancel);
-    refused(&mut Saga::<0>::new(ID), Refusal::Concluded, Saga::cancel);
+    refuses(&mut saga, Refusal::Concluded, Saga::cancel);
+    refuses(&mut Saga::<0>::new(ID), Refusal::Concluded, Saga::cancel);
 }
