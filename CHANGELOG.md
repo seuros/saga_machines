@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0](https://github.com/seuros/saga_machines/compare/saga_machines/v0.4.0...saga_machines/v0.5.0) (2026-11-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* adopt matryona 0.3: exact String bytes for SagaId.from_bytes, which and optional_fields for snapshots
+
+### Features
+
+* adopt matryona 0.3: exact String bytes for SagaId.from_bytes, which and optional_fields for snapshots ([2fe93e2](https://github.com/seuros/saga_machines/commit/2fe93e260c60c86307ae4f1adae3207024b69b70))
+
 ## [0.4.0](https://github.com/seuros/saga_machines/compare/saga_machines/v0.3.0...saga_machines/v0.4.0) (2026-11-14)
 
 
