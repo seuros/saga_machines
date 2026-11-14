@@ -120,7 +120,7 @@ class SagaTest < Minitest::Test
     saga = Saga.new(1, SagaId.new(2**64 - 1))
     action = saga.next_action
     assert_unchanged(saga) do
-      assert_raises(ArgumentError) { saga.resolve(action, :timeout) }
+      assert_raises(RangeError) { saga.resolve(action, :timeout) }
       assert_raises(TypeError) { saga.resolve(action, 'success') }
       assert_raises(TypeError) { saga.resolve(nil, :success) }
       assert_raises(TypeError) { saga.resolve(action.key, :success) }
@@ -128,7 +128,7 @@ class SagaTest < Minitest::Test
       assert_raises(TypeError) { saga.resolve(action.with(key: [2**64 - 1, 0, :forward]), :success) }
       assert_raises(TypeError) { saga.resolve(action.with(key: action.key.with(step: 0.0)), :success) }
       assert_raises(TypeError) { saga.resolve(action.with(key: action.key.with(kind: 'forward')), :success) }
-      assert_raises(ArgumentError) { saga.resolve(action.with(key: action.key.with(kind: :sideways)), :success) }
+      assert_raises(RangeError) { saga.resolve(action.with(key: action.key.with(kind: :sideways)), :success) }
       assert_raises(RangeError) { saga.resolve(action.with(attempt: AttemptId.new(-1)), :success) }
     end
   end

@@ -91,7 +91,7 @@ impl<const N: usize> Saga<N> {
 
     /// Continue the workflow of `scope` saved in `snapshot`.
     ///
-    /// The next attempt carries sequence `snapshot.issued + 1`, so an attempt
+    /// The next attempt carries sequence `snapshot.issued() + 1`, so an attempt
     /// that outlived the restart is never issued again. An attempt that was
     /// issued but never resolved is not carried over: it is
     /// [`Refusal::Stale`] here, and the same [`ActionKey`] is issued again
@@ -203,7 +203,7 @@ impl<const N: usize> Saga<N> {
             Progress::Complete | Progress::Aborted => return Ok(None),
         };
         let attempt = match self.attempts.issue() {
-            Ok(raw) => AttemptId::from_raw(raw),
+            Ok(raw) => AttemptId::issued(raw),
             Err(periscope_machines::Refusal::Exhausted) => return Err(Refusal::Exhausted),
         };
         let action = Action::new(ActionKey::new(self.id, step, kind), attempt);

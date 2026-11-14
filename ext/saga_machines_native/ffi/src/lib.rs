@@ -1,15 +1,17 @@
 //! Thin binding to sequential forward and compensating action policies.
+mod classes;
+mod hooks;
 mod init;
 mod names;
+mod read;
 
 use std::cell::RefCell;
 
 use magnus::{Error, IntoValue, RString, Ruby, Symbol, Value, prelude::*, typed_data::Obj};
-use saga_machines::{
-    Action, AttemptId, Cancellation, Outcome, Refusal, Resolution, Saga, SagaId, Snapshot,
-};
+use saga_machines::{Action, Cancellation, Outcome, Refusal, Resolution, Saga, SagaId, Snapshot};
 
-use names::{ActionRow, Number, ProgressRow, Scope, SettledRow};
+use classes::{classes, keep};
+use names::{Number, Scope};
 
 /// The step counts compiled in: the core takes the count as a const generic,
 /// so each is its own exact instantiation. No padding.
@@ -23,6 +25,7 @@ trait Policy: Send {
     fn snapshot(&self) -> Snapshot;
     fn pending(&self) -> Option<Action>;
     fn steps(&self) -> usize;
+    fn duplicate(&self) -> Box<dyn Policy>;
 }
 
 impl<const N: usize> Policy for Saga<N> {
@@ -44,6 +47,27 @@ impl<const N: usize> Policy for Saga<N> {
     fn steps(&self) -> usize {
         N
     }
+    fn duplicate(&self) -> Box<dyn Policy> {
+        Box::new(self.clone())
+    }
+}
+
+/// The erased saga as a value: it clones, and two are equal when they hold
+/// the same state, which is exactly what the snapshot and the pending action
+/// say (identity, scope, issued, progress, settlement, pending).
+struct Core(Box<dyn Policy>);
+
+impl Clone for Core {
+    fn clone(&self) -> Self {
+        Self(self.0.duplicate())
+    }
+}
+
+impl PartialEq for Core {
+    fn eq(&self, other: &Self) -> bool {
+        let state = |core: &Self| (core.0.steps(), core.0.snapshot(), core.0.pending());
+        state(self) == state(other)
+    }
 }
 
 /// What a saga is built from: a fresh identity, or saved state.
@@ -62,11 +86,6 @@ fn sized<const N: usize>(seed: Seed) -> Option<Box<dyn Policy>> {
     Some(Box::new(saga))
 }
 
-/// The scope an attempt id carries: `AttemptId#scope`.
-const fn scope_of(raw: Number) -> u16 {
-    AttemptId::from_raw(raw.0).scope()
-}
-
 /// `SagaId::from_bytes` over the bytes of a String, in any encoding.
 fn from_bytes(name: RString) -> Result<u64, Error> {
     let bytes: Vec<u8> = name.funcall("bytes", ())?;
@@ -79,7 +98,7 @@ fn symbol(ruby: &Ruby, name: &str) -> Value {
 
 #[magnus::wrap(class = "SagaMachines::Saga", free_immediately, size)]
 struct Wrapper {
-    core: RefCell<Box<dyn Policy>>,
+    core: RefCell<Core>,
 }
 
 // Refusals are answers (symbols), not exceptions. Only malformed input raises.
@@ -109,56 +128,48 @@ impl Wrapper {
             )
         })?;
         Ok(Self {
-            core: RefCell::new(core),
+            core: RefCell::new(Core(core)),
         })
     }
 
-    fn with_scope(ruby: &Ruby, steps: Number, id: Number, scope: Scope) -> Result<Self, Error> {
-        Self::build(ruby, steps, Seed::Fresh(SagaId::from_raw(id.0), scope.0))
+    /// `id` must be exactly a `SagaId`.
+    fn with_scope(ruby: &Ruby, steps: Number, id: Value, scope: Scope) -> Result<Self, Error> {
+        let id = read::saga_id(ruby, classes(ruby)?, id)?;
+        Self::build(ruby, steps, Seed::Fresh(id, scope.0))
     }
 
-    fn restored(
-        ruby: &Ruby,
-        steps: Number,
-        saved: (Number, Scope, ProgressRow, Number, Option<SettledRow>),
-        scope: Scope,
-    ) -> Result<Self, Error> {
-        let (id, saved_scope, progress, issued, settled) = saved;
-        let settled = match settled {
-            Some(row) => Some(names::settlement(ruby, row)?),
-            None => None,
-        };
-        let snapshot = Snapshot {
-            id: SagaId::from_raw(id.0),
-            scope: saved_scope.0,
-            progress: names::progress(ruby, progress)?,
-            issued: issued.0,
-            settled,
-        };
+    /// `saved` must be exactly a `Snapshot`, read natively and checked again.
+    fn restored(ruby: &Ruby, steps: Number, saved: Value, scope: Scope) -> Result<Self, Error> {
+        let snapshot = read::snapshot(ruby, classes(ruby)?, saved)?;
         Self::build(ruby, steps, Seed::Saved(snapshot, scope.0))
     }
 
-    /// An action row, `nil` when nothing is left, or a refusal symbol.
+    /// An `Action`, `nil` when nothing is left, or a refusal symbol. Decided
+    /// on a copy, kept once the `Action` is built and the saga is still
+    /// unfrozen and unchanged: an attempt the caller never saw is never
+    /// issued.
     fn next_action(ruby: &Ruby, this: Obj<Self>) -> Result<Value, Error> {
-        this.check_frozen()?;
-        let answer = this.core.borrow_mut().next_action();
-        Ok(match answer {
-            Ok(Some(action)) => names::action_row(ruby, action).into_value_with(ruby),
-            Ok(None) => ruby.qnil().as_value(),
-            Err(why) => symbol(ruby, names::refusal(why)),
+        let classes = classes(ruby)?;
+        keep(ruby, this.as_value(), &this.core, |core| {
+            match core.0.next_action() {
+                Ok(Some(action)) => hooks::action(ruby, classes, action),
+                Ok(None) => Ok(ruby.qnil().as_value()),
+                Err(why) => Ok(symbol(ruby, names::refusal(why))),
+            }
         })
     }
 
+    /// `action` must be exactly an `Action`, read natively and checked again.
     fn resolve(
         ruby: &Ruby,
         this: Obj<Self>,
-        action: ActionRow,
+        action: Value,
         outcome: Symbol,
     ) -> Result<Value, Error> {
         this.check_frozen()?;
-        let action = names::action(ruby, action)?;
+        let action = read::action(ruby, classes(ruby)?, action)?;
         let outcome = names::outcome(ruby, outcome)?;
-        let answer = this.core.borrow_mut().resolve(action, outcome);
+        let answer = this.core.borrow_mut().0.resolve(action, outcome);
         Ok(match answer {
             Ok(resolution) => symbol(ruby, names::resolution(resolution)),
             Err(why) => symbol(ruby, names::refusal(why)),
@@ -167,7 +178,7 @@ impl Wrapper {
 
     fn cancel(ruby: &Ruby, this: Obj<Self>) -> Result<Value, Error> {
         this.check_frozen()?;
-        let answer = this.core.borrow_mut().cancel();
+        let answer = this.core.borrow_mut().0.cancel();
         Ok(match answer {
             Ok(cancellation) => symbol(ruby, names::cancellation(cancellation)),
             Err(why) => symbol(ruby, names::refusal(why)),
@@ -176,29 +187,29 @@ impl Wrapper {
 
     /// The core `Snapshot`, field by field in its order.
     fn snapshot(ruby: &Ruby, this: &Self) -> Value {
-        let snapshot = this.core.borrow().snapshot();
+        let snapshot = this.core.borrow().0.snapshot();
         let settled = snapshot
-            .settled
+            .settled()
             .map(|settled| names::settled_row(ruby, settled));
-        let progress = names::progress_row(ruby, snapshot.progress);
+        let progress = names::progress_row(ruby, snapshot.progress());
         let fields = (
-            snapshot.id.raw(),
-            snapshot.scope,
+            snapshot.id().raw(),
+            snapshot.scope(),
             progress,
-            snapshot.issued,
+            snapshot.issued(),
             settled,
         );
         fields.into_value_with(ruby)
     }
 
     fn pending(ruby: &Ruby, this: &Self) -> Value {
-        let pending = this.core.borrow().pending();
+        let pending = this.core.borrow().0.pending();
         pending
             .map(|action| names::action_row(ruby, action))
             .into_value_with(ruby)
     }
 
     fn steps(&self) -> usize {
-        self.core.borrow().steps()
+        self.core.borrow().0.steps()
     }
 }

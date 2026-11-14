@@ -6,11 +6,8 @@ use super::*;
 #[test]
 fn exhaustion_is_a_refusal_and_not_the_terminal_answer() {
     let snapshot = Snapshot {
-        id: ID,
         scope: 3,
-        progress: Progress::Forward(0),
-        issued: SEQUENCE_MAX - 1,
-        settled: None,
+        ..saved(Progress::Forward(0), SEQUENCE_MAX - 1, None)
     };
     let mut saga = Saga::<1>::restored(snapshot, 3).expect("sound");
     let last = next(&mut saga);
@@ -46,8 +43,8 @@ fn an_attempt_the_saga_never_issued_is_stale() {
     refused(&mut near, Refusal::Stale, |saga| {
         saga.resolve(from_far, Outcome::Success)
     });
-    for raw in [0, (1 << 48) | 2, 1 << 48, u64::MAX] {
-        let forged = Action::new(from_near.key(), AttemptId::from_raw(raw));
+    for raw in [(1 << 48) | 2, (2 << 48) | 1, u64::MAX] {
+        let forged = Action::new(from_near.key(), attempt(raw));
         refused(&mut near, Refusal::Stale, |saga| {
             saga.resolve(forged, Outcome::Success)
         });

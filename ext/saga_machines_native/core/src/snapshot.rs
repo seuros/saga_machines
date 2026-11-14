@@ -17,20 +17,76 @@ pub struct Settlement {
 
 /// Persistable saga state, excluding any unresolved issued attempt.
 ///
-/// Plain data for the caller to store and rebuild; nothing is trusted until
-/// [`Saga::restored`](crate::Saga::restored) has checked it.
+/// Data for the caller to store, read back through the accessors and rebuild
+/// with [`Snapshot::new`]; what depends on the number of steps is checked by
+/// [`Saga::restored`](crate::Saga::restored).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Snapshot {
+    pub(crate) id: SagaId,
+    pub(crate) scope: u16,
+    pub(crate) progress: Progress,
+    pub(crate) issued: u64,
+    pub(crate) settled: Option<Settlement>,
+}
+
+impl Snapshot {
+    /// Build saved state, checking what holds whatever the number of steps.
+    ///
+    /// `None` when `issued` is beyond 2^48 - 1, or when the settlement is
+    /// not one a saga of `id` in `scope` can have recorded: its key names
+    /// another saga, or its attempt is of another scope or beyond `issued`.
+    /// The rest depends on the number of steps and is checked by
+    /// [`Saga::restored`](crate::Saga::restored).
+    #[must_use]
+    pub fn new(
+        id: SagaId,
+        scope: u16,
+        progress: Progress,
+        issued: u64,
+        settled: Option<Settlement>,
+    ) -> Option<Self> {
+        let attempts = Issuer::resumed(scope, issued)?;
+        let ours = settled.is_none_or(|settled| {
+            settled.action.key().saga() == id && attempts.owns(settled.action.attempt().raw())
+        });
+        ours.then_some(Self {
+            id,
+            scope,
+            progress,
+            issued,
+            settled,
+        })
+    }
+
     /// Workflow identity.
-    pub id: SagaId,
+    #[must_use]
+    pub const fn id(&self) -> SagaId {
+        self.id
+    }
+
     /// The scope the saga issues attempts in.
-    pub scope: u16,
+    #[must_use]
+    pub const fn scope(&self) -> u16 {
+        self.scope
+    }
+
     /// Progress at the last honoured call.
-    pub progress: Progress,
+    #[must_use]
+    pub const fn progress(&self) -> Progress {
+        self.progress
+    }
+
     /// Attempts issued so far; a restored saga never reissues them.
-    pub issued: u64,
+    #[must_use]
+    pub const fn issued(&self) -> u64 {
+        self.issued
+    }
+
     /// The last action resolved and its outcome, if any.
-    pub settled: Option<Settlement>,
+    #[must_use]
+    pub const fn settled(&self) -> Option<Settlement> {
+        self.settled
+    }
 }
 
 /// Where a saga of `N` steps starts.

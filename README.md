@@ -254,6 +254,8 @@ Honoured answers say what happened. Refusals are symbols, one per reason, and a 
 | `Saga.new(steps, id)`, `Saga.with_scope(steps, id, scope)` | a `Saga` | none: raises on malformed input |
 | `Saga.restored(steps, snapshot, scope)` | a `Saga` | none: raises `RangeError` for saved state that isn't that saga's |
 
+No answer records a clock: the saga takes no time, so every answer holds whatever the time.
+
 What each refusal means:
 
 - `:exhausted`: there's work left, but the scope's 2**48-1 attempts are spent. Not the same as `nil`, which means the journey is over.
@@ -272,7 +274,9 @@ Repeats that are honoured, because the saga can prove them:
 
 - **Steps are exact.** The step count is the first argument and must be one of `SagaMachines::STEPS`: 0, 1, 2, 3, 4, 8, or 16. The engine takes the count at compile time, so those are the sizes built in; anything else raises `RangeError`. Zero steps is already complete.
 - **Identity is a `SagaId`** wrapping an Integer in `0..2**64-1`. Use your order id, your job id, whatever you'd put on the manifest. A bare Integer, a Float or a String raises `TypeError`; out of range raises `RangeError`.
-- **Refusals are symbols and never raise.** Only malformed input raises: `TypeError` for the wrong class, `RangeError` out of range, `ArgumentError` for an outcome, kind or progress symbol that doesn't exist.
+- **Refusals are symbols and never raise.** Only malformed input raises: `TypeError` for the wrong class, `RangeError` for a value the core doesn't accept, an outcome, kind or progress symbol that doesn't exist included. `ArgumentError` is Ruby's own, for the wrong number of arguments.
+- **Values are valid or don't exist.** Every value validates when it's built, by the gem or by you, through the engine room: `AttemptId.new(0)` raises `RangeError` (no saga issues a sequence of zero), so does `ActionKey.new(id, -1, :forward)` or a `Snapshot` whose settlement belongs to another saga, another scope, or an attempt past `issued`. What depends on the step count is for `Saga.restored` to judge. The values are final: subclassing one raises `TypeError` and `allocate` is gone. That stops accidents, not reflection (a named subclass still leaves its constant behind; `Marshal.load` and a hand-bound `Data#initialize` skip the check), so the engine room is the authority: every value it reads back (the `SagaId` a saga starts with, the `Action` you resolve, the `Snapshot` you restore, and every value nested in them) must be exactly its class (`TypeError` otherwise, a subclass included), and is read natively and checked again (`RangeError`). A forged value never reaches the saga and never earns `:stale` or `:mismatch`.
+- **A raised answer loses nothing.** The value classes are resolved once, when the extension loads. Building the `Action` runs Ruby code (`new`, which a reopened class can redefine), so `next_action` decides on a copy, builds the `Action`, and keeps the copy only if the saga is still unfrozen and unchanged. If building it raises, nothing was issued and the next `next_action` issues the same attempt; a `new` that freezes the saga raises `FrozenError`, one that calls back in and changes it raises `RuntimeError`, and in both cases the outer call is not applied.
 - **No clock.** The saga takes no time and reads none. When to retry is yours.
 - **Every step is compensatable.** If you have a step that can't be undone, put it last, so nothing after it can fail.
 - **A forward failure means nothing happened.** If the car API timed out and you don't know whether it booked, find out before you report. Reporting `:failure` on a step that secretly succeeded is how you leak a car.

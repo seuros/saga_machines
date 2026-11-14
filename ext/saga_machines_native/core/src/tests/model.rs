@@ -35,7 +35,7 @@ impl Model {
                 Progress::Complete | Progress::Aborted => return None,
             };
             self.issued += 1;
-            let attempt = AttemptId::from_raw((u64::from(SCOPE) << 48) | self.issued);
+            let attempt = attempt((u64::from(SCOPE) << 48) | self.issued);
             self.pending = Some(Action::new(ActionKey::new(ID, step, kind), attempt));
         }
         self.pending
@@ -122,10 +122,10 @@ fn pick(rng: &mut Rng, saga: &Saga<STEPS>, history: &[Action]) -> Action {
         (7, _, _) => {
             let key = ActionKey::new(ID, 0, Kind::Forward);
             let scope = u64::from(SCOPE) + rng.below(2);
-            Action::new(key, AttemptId::from_raw((scope << 48) | rng.below(6)))
+            Action::new(key, attempt((scope << 48) | (1 + rng.below(5))))
         }
         _ if !history.is_empty() => issued(rng),
-        _ => Action::new(ActionKey::new(ID, 0, Kind::Forward), AttemptId::from_raw(0)),
+        _ => Action::new(ActionKey::new(ID, 0, Kind::Forward), attempt(1)),
     }
 }
 

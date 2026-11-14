@@ -9,7 +9,13 @@ module SagaMachines
   # The core's `Progress`: tuple variants as Data, unit variants as symbols.
   type progress = Forward | Compensating | :complete | :aborted
 
-  # Mirrors the core's `SagaId`. `new(raw)` is `SagaId::from_raw`.
+  # Every Data value validates at construction, built by the gem or by hand:
+  # TypeError for the wrong class, RangeError for a value the core rejects.
+  # They are final: subclassing one raises TypeError, and `allocate` is
+  # undefined.
+
+  # Mirrors the core's `SagaId`. `new(raw)` is `SagaId::from_raw`: an
+  # Integer in 0..2**64-1.
   class SagaId < Data
     attr_reader raw: Integer
     def self.new: (Integer raw) -> SagaId
@@ -19,7 +25,8 @@ module SagaMachines
     def self.from_bytes: (String name) -> SagaId
   end
 
-  # Mirrors the core's `AttemptId`. `new(raw)` is `AttemptId::from_raw`.
+  # Mirrors the core's `AttemptId`. `new(raw)` is `AttemptId::from_raw`:
+  # RangeError for a sequence (the low 48 bits) of zero, which no saga issues.
   class AttemptId < Data
     # The Integer form: the saga's scope in the top 16 bits above a sequence
     # starting at 1.
@@ -31,7 +38,8 @@ module SagaMachines
   end
 
   # Mirrors the core's `ActionKey`: the idempotency identity, the same for
-  # every attempt at one piece of work.
+  # every attempt at one piece of work. `saga` must be a SagaId, `step` an
+  # Integer in the platform's usize range, `kind` :forward or :compensate.
   class ActionKey < Data
     attr_reader saga: SagaId
     attr_reader step: Integer
@@ -73,7 +81,10 @@ module SagaMachines
                 | (action: Action, outcome: outcome) -> Settlement
   end
 
-  # Mirrors the core's `Snapshot`, in its field order.
+  # Mirrors the core's `Snapshot`, in its field order. Built through
+  # `Snapshot::new`: RangeError for an `issued` past 2**48-1, or a settlement
+  # of another saga, of another scope or beyond `issued`. What depends on
+  # the number of steps is left to Saga.restored.
   class Snapshot < Data
     attr_reader id: SagaId
     attr_reader scope: Integer
@@ -84,16 +95,11 @@ module SagaMachines
                 | (id: SagaId, scope: Integer, progress: progress, issued: Integer, settled: Settlement?) -> Snapshot
   end
 
-  # Private: Data values to and from the rows the native methods speak.
+  # Private: Data values from the rows the native readers answer.
   module Wire
-    def self?.expect: [T] (untyped value, Class type) -> untyped
-    def self?.action_row: (Action action) -> Array[untyped]
     def self?.action: (Array[untyped] row) -> Action
-    def self?.progress_row: (progress progress) -> Array[untyped]
     def self?.progress: (Symbol name, Integer? step) -> progress
-    def self?.settled_row: (Settlement? settled) -> Array[untyped]?
     def self?.settled: (Array[untyped]? row) -> Settlement?
-    def self?.snapshot_row: (Snapshot snapshot) -> Array[untyped]
     def self?.snapshot: (Array[untyped] row) -> Snapshot
   end
 
@@ -106,7 +112,7 @@ module SagaMachines
     # Ids, steps, counts and raw attempts are Integers; a non-Integer raises
     # TypeError, a negative or too large one RangeError. A value of the wrong
     # class where a Data is expected raises TypeError; an unknown kind,
-    # outcome or progress symbol raises ArgumentError. A frozen saga raises
+    # outcome or progress symbol raises RangeError. A frozen saga raises
     # FrozenError on next_action, resolve and cancel.
 
     # A fresh saga of `steps` steps in scope zero. `steps` is one of STEPS
@@ -128,10 +134,16 @@ module SagaMachines
     # answers nil.
     def self.restored: (Integer steps, Snapshot snapshot, Integer scope) -> Saga
     # Private: the native constructors and what the Data values read.
-    def self.native_with_scope: (Integer steps, Integer id, Integer scope) -> Saga
-    def self.native_restored: (Integer steps, Array[untyped] saved, Integer scope) -> Saga
+    def self.native_with_scope: (Integer steps, SagaId id, Integer scope) -> Saga
+    def self.native_restored: (Integer steps, Snapshot saved, Integer scope) -> Saga
     def self.native_scope_of: (Integer raw) -> Integer
     def self.native_from_bytes: (String name) -> Integer
+    def self.native_saga_id: (Integer raw) -> Integer
+    def self.native_step: (Integer step) -> Integer
+    def self.native_key: (SagaId saga, Integer step, kind kind) -> nil
+    def self.native_action: (ActionKey key, AttemptId attempt) -> nil
+    def self.native_settlement: (Action action, outcome outcome) -> nil
+    def self.native_snapshot: (SagaId id, Integer scope, progress progress, Integer issued, Settlement? settled) -> nil
 
     def steps: () -> Integer
     def id: () -> SagaId
@@ -151,7 +163,10 @@ module SagaMachines
     # A drain: the next Action, or nil once the saga is :complete or
     # :aborted. While an action is pending it answers that same action and
     # changes nothing. :exhausted when work remains but every attempt of the
-    # scope has been issued.
+    # scope has been issued. Decided on a copy and kept only once the Action
+    # is built and the saga is still unfrozen and unchanged: should building
+    # it raise, nothing was issued; a build that froze the saga raises
+    # FrozenError, one that changed it RuntimeError, and nothing is applied.
     def next_action: () -> (Action | nil | :exhausted)
     # Honoured: :resolved for the pending action, or :already_resolved for
     # the last settled action reported with the same outcome again (a repeat
@@ -169,8 +184,7 @@ module SagaMachines
 
     private
 
-    def native_next_action: () -> (Array[untyped] | nil | Symbol)
-    def native_resolve: (Array[untyped] action, Symbol outcome) -> Symbol
+    def native_resolve: (Action action, Symbol outcome) -> Symbol
     def native_snapshot: () -> Array[untyped]
     def native_pending: () -> Array[untyped]?
   end

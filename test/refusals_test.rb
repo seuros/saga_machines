@@ -33,7 +33,7 @@ class RefusalsTest < Minitest::Test
     assert_unchanged(far) { assert_equal :stale, far.resolve(from_near, :success) }
     assert_unchanged(near) do
       assert_equal :stale, near.resolve(from_far, :success)
-      [0, (1 << 48) | 2, 1 << 48, 2**64 - 1].each do |raw|
+      [(1 << 48) | 2, (2 << 48) | 1, 2**64 - 1].each do |raw|
         assert_equal :stale, near.resolve(from_near.with(attempt: AttemptId.new(raw)), :success)
       end
     end

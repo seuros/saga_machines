@@ -79,12 +79,11 @@ class ScopeTest < Minitest::Test
     first = run_step(saga, :success)
     saved = saga.snapshot
     unsound = [
-      [2, saved, 5], [2, saved.with(scope: 5), 5], [1, saved, 4], [2, saved.with(issued: 0), 4],
-      [2, saved.with(issued: 2**48), 4], [2, saved.with(progress: Forward.new(0)), 4],
+      [2, saved, 5], [1, saved, 4],
+      [2, saved.with(progress: Forward.new(0)), 4],
       [2, saved.with(progress: Forward.new(2)), 4], [2, saved.with(progress: :complete), 4],
-      [2, saved.with(settled: nil), 4], [2, saved.with(id: SagaId.new(8)), 4],
-      [2, saved.with(settled: Settlement.new(first, :failure)), 4],
-      [2, saved.with(settled: Settlement.new(first.with(attempt: AttemptId.new(1)), :success)), 4]
+      [2, saved.with(settled: nil), 4],
+      [2, saved.with(settled: Settlement.new(first, :failure)), 4]
     ]
     unsound.each do |steps, snapshot, scope|
       error = assert_raises(RangeError, snapshot.inspect) { Saga.restored(steps, snapshot, scope) }
@@ -92,6 +91,22 @@ class ScopeTest < Minitest::Test
     end
     assert_instance_of Saga, Saga.restored(2, saved, 4)
     assert_instance_of Saga, Saga.restored(2, saved.with(progress: Compensating.new(0)), 4)
+  end
+
+  # `Snapshot::new` refuses what no saga of any step count can have saved:
+  # such a snapshot is never built at all.
+  def test_a_snapshot_no_saga_of_any_steps_can_save_does_not_exist
+    saga = Saga.with_scope(2, ID, 4)
+    first = run_step(saga, :success)
+    saved = saga.snapshot
+    [
+      -> { saved.with(issued: 0) }, -> { saved.with(issued: 2**48) },
+      -> { saved.with(id: SagaId.new(8)) }, -> { saved.with(scope: 5) },
+      -> { saved.with(settled: Settlement.new(first.with(attempt: AttemptId.new(1)), :success)) },
+      -> { Snapshot.new(ID, 0, Forward.new(1), 0, Settlement.new(action(0, :forward, 1), :success)) }
+    ].each { |build| assert_raises(RangeError) { build.call } }
+    # Not restorable for two steps, but a value in its own right.
+    assert_equal Forward.new(0), saved.with(progress: Forward.new(0)).progress
   end
 
   # The check is exact: these were accepted while the floor followed the
@@ -133,10 +148,11 @@ class ScopeTest < Minitest::Test
     assert_raises(TypeError) { Saga.restored(2, saved.with(progress: Forward.new(nil)), 0) }
     assert_raises(TypeError) { Saga.restored(2, saved.with(settled: [1, :success]), 0) }
     assert_raises(TypeError) { Saga.restored(2, saved, '0') }
-    assert_raises(ArgumentError) { Saga.restored(2, saved.with(progress: :forward), 0) }
-    assert_raises(ArgumentError) { Saga.restored(2, saved.with(progress: :paused), 0) }
-    settled = Settlement.new(action(0, :forward, 1), :timeout)
-    assert_raises(ArgumentError) { Saga.restored(2, saved.with(settled: settled), 0) }
+    assert_raises(RangeError) { Saga.restored(2, saved.with(progress: :forward), 0) }
+    assert_raises(RangeError) { Saga.restored(2, saved.with(progress: :paused), 0) }
+    assert_raises(RangeError) { Settlement.new(action(0, :forward, 1), :timeout) }
+    assert_raises(TypeError) { Settlement.new(action(0, :forward, 1), 'success') }
+    assert_raises(TypeError) { Settlement.new(nil, :success) }
     assert_raises(RangeError) { Saga.restored(2, saved.with(scope: 65_536), 0) }
     assert_raises(RangeError) { Saga.restored(2, saved.with(issued: -1), 0) }
     assert_raises(RangeError) { Saga.restored(5, saved, 0) }

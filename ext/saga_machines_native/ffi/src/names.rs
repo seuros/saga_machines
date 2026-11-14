@@ -2,9 +2,12 @@
 //! match on a core enum lists its variants: a new one fails to compile here.
 use magnus::{Error, Integer, Ruby, Symbol, TryConvert, Value};
 use saga_machines::{
-    Action, ActionKey, AttemptId, Cancellation, Kind, Outcome, Progress, Refusal, Resolution,
-    SagaId, Settlement,
+    Action, AttemptId, Cancellation, Kind, Outcome, Progress, Refusal, Resolution, Settlement,
 };
+
+pub fn wrong_type(ruby: &Ruby, message: &'static str) -> Error {
+    Error::new(ruby.exception_type_error(), message)
+}
 
 #[derive(Clone, Copy)]
 pub struct Number(pub u64);
@@ -40,14 +43,7 @@ impl TryConvert for Scope {
     }
 }
 
-/// An action as Ruby passes it: saga id, step, kind, attempt.
-pub type ActionRow = (Number, Number, Symbol, Number);
-/// A settlement as Ruby passes it: the action's four fields, then the outcome.
-pub type SettledRow = (Number, Number, Symbol, Number, Symbol);
-/// A progress as Ruby passes it: the variant's name and its step, if any.
-pub type ProgressRow = (Symbol, Option<Number>);
-
-fn step(ruby: &Ruby, step: Number) -> Result<usize, Error> {
+pub fn step(ruby: &Ruby, step: Number) -> Result<usize, Error> {
     usize::try_from(step.0).map_err(|_| Error::new(ruby.exception_range_error(), "step too large"))
 }
 
@@ -63,7 +59,7 @@ pub fn kind(ruby: &Ruby, name: Symbol) -> Result<Kind, Error> {
         "forward" => Ok(Kind::Forward),
         "compensate" => Ok(Kind::Compensate),
         _ => Err(Error::new(
-            ruby.exception_arg_error(),
+            ruby.exception_range_error(),
             "kind must be :forward or :compensate",
         )),
     }
@@ -81,15 +77,21 @@ pub fn outcome(ruby: &Ruby, name: Symbol) -> Result<Outcome, Error> {
         "success" => Ok(Outcome::Success),
         "failure" => Ok(Outcome::Failure),
         _ => Err(Error::new(
-            ruby.exception_arg_error(),
+            ruby.exception_range_error(),
             "outcome must be :success or :failure (known effects only)",
         )),
     }
 }
 
-pub fn action(ruby: &Ruby, (saga, at, name, attempt): ActionRow) -> Result<Action, Error> {
-    let key = ActionKey::new(SagaId::from_raw(saga.0), step(ruby, at)?, kind(ruby, name)?);
-    Ok(Action::new(key, AttemptId::from_raw(attempt.0)))
+/// The core id an attempt's Integer form names; `RangeError` for a
+/// sequence of zero, which no saga issues.
+pub fn attempt(ruby: &Ruby, raw: Number) -> Result<AttemptId, Error> {
+    AttemptId::from_raw(raw.0).ok_or_else(|| {
+        Error::new(
+            ruby.exception_range_error(),
+            "an attempt's sequence (the low 48 bits) is at least 1",
+        )
+    })
 }
 
 pub fn action_row(ruby: &Ruby, action: Action) -> (u64, usize, Symbol, u64) {
@@ -98,38 +100,10 @@ pub fn action_row(ruby: &Ruby, action: Action) -> (u64, usize, Symbol, u64) {
     (key.saga().raw(), key.step(), kind, action.attempt().raw())
 }
 
-pub fn settlement(ruby: &Ruby, row: SettledRow) -> Result<Settlement, Error> {
-    let (saga, at, kind, attempt, name) = row;
-    Ok(Settlement {
-        action: action(ruby, (saga, at, kind, attempt))?,
-        outcome: outcome(ruby, name)?,
-    })
-}
-
 pub fn settled_row(ruby: &Ruby, settled: Settlement) -> (u64, usize, Symbol, u64, Symbol) {
     let (saga, step, kind, attempt) = action_row(ruby, settled.action);
     let outcome = ruby.to_symbol(outcome_name(settled.outcome));
     (saga, step, kind, attempt, outcome)
-}
-
-pub fn progress(ruby: &Ruby, (name, at): ProgressRow) -> Result<Progress, Error> {
-    let missing = || {
-        Error::new(
-            ruby.exception_type_error(),
-            "a progress step must be an Integer",
-        )
-    };
-    let stepped = || step(ruby, at.ok_or_else(missing)?);
-    match name.name()?.as_ref() {
-        "forward" => Ok(Progress::Forward(stepped()?)),
-        "compensating" => Ok(Progress::Compensating(stepped()?)),
-        "complete" => Ok(Progress::Complete),
-        "aborted" => Ok(Progress::Aborted),
-        _ => Err(Error::new(
-            ruby.exception_arg_error(),
-            "progress must be a Forward, a Compensating, :complete or :aborted",
-        )),
-    }
 }
 
 pub fn progress_row(ruby: &Ruby, progress: Progress) -> (Symbol, Option<usize>) {

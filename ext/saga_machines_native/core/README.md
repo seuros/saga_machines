@@ -64,6 +64,11 @@ issued count; the saga equals a clone taken before the call.
 | `cancel()` | `Cancelled`, `AlreadyUnwinding` | `Concluded`, `Busy` |
 | `Action::claim_in(ledger, now, ttl)` | the ledger's `Claim` | the ledger's `LedgerRefusal` |
 | `Saga::restored(snapshot, scope)` | `Some(Saga)` | `None` for unsound saved state |
+| `AttemptId::from_raw(raw)` | `Some(AttemptId)` | `None` for a sequence of zero |
+| `Snapshot::new(id, scope, progress, issued, settled)` | `Some(Snapshot)` | `None`, see below |
+
+No answer records a clock: the saga takes none, and every answer holds
+whatever the time.
 
 - `Exhausted`: work remains but the scope's 2^48 - 1 attempts are spent. It is
   not the terminal answer: a finished saga answers `Ok(None)`.
@@ -125,6 +130,14 @@ incarnation used.
 `claim_in` is named for what it does: it claims the action's key *in* a sibling
 ledger and writes to it, so it is not a `_from` reader. It changes nothing in
 the saga, and the ledger's answer comes back unchanged, honoured or refused.
+
+**Values.** `AttemptId::from_raw` refuses a sequence of zero, which no saga
+issues. `Snapshot::new` refuses what no saga of any step count can have
+saved: an `issued` past 2^48 - 1, or a settlement whose key names another
+saga or whose attempt is of another scope or beyond `issued`. Its fields
+are private, read through `id()`, `scope()`, `progress()`, `issued()` and
+`settled()`, so `Snapshot::new` is the only way to build one; `Saga::restored`
+checks what depends on the step count.
 
 **Time.** The saga reads no clock and takes none. `claim_in` passes `now` and
 `ttl` to the ledger as `core::time::Duration`.

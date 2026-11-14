@@ -1,4 +1,9 @@
-use periscope_machines::scope_of;
+use periscope_machines::{scope_of, sequence_of};
+
+/// FNV-1a 64-bit offset basis (Fowler, Noll, Vo; IETF draft-eastlake-fnv).
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+/// FNV-1a 64-bit prime, from the same specification.
+const FNV_PRIME: u64 = 0x0100_0000_01b3;
 
 /// Workflow identity in the dedup namespace: the caller's, never issued here.
 ///
@@ -19,11 +24,11 @@ impl SagaId {
     /// (FNV-1a: the same bytes give the same identity in every process).
     #[must_use]
     pub const fn from_bytes(bytes: &[u8]) -> Self {
-        let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+        let mut hash = FNV_OFFSET_BASIS;
         let mut index = 0;
         while index < bytes.len() {
             hash ^= bytes[index] as u64;
-            hash = hash.wrapping_mul(0x0100_0000_01b3);
+            hash = hash.wrapping_mul(FNV_PRIME);
             index += 1;
         }
         Self(hash)
@@ -44,14 +49,27 @@ impl SagaId {
 /// integer underneath ([`AttemptId::raw`]), so it can cross a queue or a
 /// database column and be rebuilt with [`AttemptId::from_raw`]; a rebuilt id
 /// the saga never issued is [`Refusal::Stale`](crate::Refusal::Stale).
+/// Every `AttemptId` has a sequence of at least one: no saga issues zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AttemptId(u64);
 
 impl AttemptId {
-    /// Rebuild an id from its integer form. Any integer is accepted here; the
-    /// saga decides whether it names an attempt.
+    /// Rebuild an id from its integer form.
+    ///
+    /// `None` when the sequence (the low 48 bits) is zero, which no saga
+    /// issues. Anything else is accepted here; the saga decides whether it
+    /// names an attempt.
     #[must_use]
-    pub const fn from_raw(raw: u64) -> Self {
+    pub const fn from_raw(raw: u64) -> Option<Self> {
+        if sequence_of(raw) == 0 {
+            None
+        } else {
+            Some(Self(raw))
+        }
+    }
+
+    /// The id an issuer just handed out: its sequence starts at one.
+    pub(crate) const fn issued(raw: u64) -> Self {
         Self(raw)
     }
 

@@ -1,4 +1,3 @@
-#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 use core::time::Duration;
 
 use super::*;
@@ -10,6 +9,31 @@ mod refusals;
 mod restore;
 
 const ID: SagaId = SagaId::from_raw(7);
+
+/// An attempt id from its integer form; panics on a sequence of zero.
+fn attempt(raw: u64) -> AttemptId {
+    AttemptId::from_raw(raw).expect("a sequence of at least one")
+}
+
+/// A snapshot of a saga in scope zero, settled by `(step, kind, outcome,
+/// attempt)`, built field by field: unsound ones included.
+fn saved(
+    progress: Progress,
+    issued: u64,
+    settled: Option<(usize, Kind, Outcome, u64)>,
+) -> Snapshot {
+    let settled = settled.map(|(step, kind, outcome, raw)| Settlement {
+        action: Action::new(ActionKey::new(ID, step, kind), attempt(raw)),
+        outcome,
+    });
+    Snapshot {
+        id: ID,
+        scope: 0,
+        progress,
+        issued,
+        settled,
+    }
+}
 
 /// Issue the next action; panics when the saga is finished or exhausted.
 fn next<const N: usize>(saga: &mut Saga<N>) -> Action {
@@ -166,11 +190,18 @@ fn identities_hash_deterministically_and_rebuild_from_parts() {
     );
     // An action crosses a queue as plain data and is rebuilt on the way back.
     let key = ActionKey::new(SagaId::from_raw(id.raw()), action.step(), action.kind());
-    let rebuilt = Action::new(key, AttemptId::from_raw(action.attempt().raw()));
+    let rebuilt = Action::new(key, attempt(action.attempt().raw()));
     assert_eq!(
         saga.resolve(rebuilt, Outcome::Success),
         Ok(Resolution::Resolved)
     );
+    // No saga issues a sequence of zero, in any scope, so no id carries one.
+    for raw in [0, 1 << 48, u64::from(u16::MAX) << 48] {
+        assert_eq!(AttemptId::from_raw(raw), None);
+    }
+    for raw in [1, (7 << 48) | 1, u64::MAX] {
+        assert_eq!(AttemptId::from_raw(raw).map(AttemptId::raw), Some(raw));
+    }
 }
 
 #[test]

@@ -53,16 +53,16 @@ fn walk<const N: usize>() -> Vec<Saga<N>> {
     found
 }
 
-/// Every settlement over steps `0..=N`, sequences `0..=ISSUED_MAX + 1`, both
+/// Every settlement over steps `0..=N`, sequences `1..=ISSUED_MAX + 1`, both
 /// kinds and outcomes, this saga's key or another's, this scope or another.
 fn settlements<const N: usize>() -> Vec<Option<Settlement>> {
     let mut all = Vec::from([None]);
     for step in 0..=N {
-        for sequence in 0..=ISSUED_MAX + 1 {
+        for sequence in 1..=ISSUED_MAX + 1 {
             for kind in [Kind::Forward, Kind::Compensate] {
                 for outcome in [Outcome::Success, Outcome::Failure] {
                     for (id, scope) in [(ID, SCOPE), (OTHER_ID, SCOPE), (ID, OTHER_SCOPE)] {
-                        let attempt = AttemptId::from_raw(scoped(scope, sequence));
+                        let attempt = attempt(scoped(scope, sequence));
                         let action = Action::new(ActionKey::new(id, step, kind), attempt);
                         all.push(Some(Settlement { action, outcome }));
                     }
@@ -138,29 +138,19 @@ fn restored_accepts_exactly_the_reachable_snapshots() {
 fn a_settlement_needs_the_attempts_that_lead_to_it() {
     use Kind::{Compensate, Forward as Fwd};
     use Outcome::Success;
-    let saved = |progress, issued, settled: Option<(usize, Kind, u64)>| Snapshot {
-        id: ID,
-        scope: 0,
-        progress,
-        issued,
-        settled: settled.map(|(step, kind, attempt)| Settlement {
-            action: Action::new(ActionKey::new(ID, step, kind), AttemptId::from_raw(attempt)),
-            outcome: Success,
-        }),
-    };
     // Attempt 1 is the forward try of step 0, never its compensation.
-    let early = saved(Progress::Aborted, 1, Some((0, Compensate, 1)));
+    let early = saved(Progress::Aborted, 1, Some((0, Compensate, Success, 1)));
     assert_eq!(Saga::<2>::restored(early, 0), None);
-    let soonest = saved(Progress::Aborted, 2, Some((0, Compensate, 2)));
+    let soonest = saved(Progress::Aborted, 2, Some((0, Compensate, Success, 2)));
     assert!(Saga::<2>::restored(soonest, 0).is_some());
     // No attempt is issued after a settlement that finished the saga.
-    let extra = saved(Progress::Complete, 2, Some((0, Fwd, 1)));
+    let extra = saved(Progress::Complete, 2, Some((0, Fwd, Success, 1)));
     assert_eq!(Saga::<1>::restored(extra, 0), None);
     assert_eq!(
         Saga::<0>::restored(saved(Progress::Complete, 1, None), 0),
         None
     );
-    let extra = saved(Progress::Aborted, 3, Some((0, Compensate, 2)));
+    let extra = saved(Progress::Aborted, 3, Some((0, Compensate, Success, 2)));
     assert_eq!(Saga::<2>::restored(extra, 0), None);
     // A cancel settles nothing, so attempts lost to restarts may precede it.
     let cancelled = saved(Progress::Aborted, 5, None);

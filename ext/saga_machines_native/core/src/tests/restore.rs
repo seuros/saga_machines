@@ -85,25 +85,6 @@ fn a_snapshot_of_another_scope_is_refused() {
     }
 }
 
-/// A snapshot of a two-step saga in scope zero, settled by attempt `attempt`.
-fn saved(
-    progress: Progress,
-    issued: u64,
-    settled: Option<(usize, Kind, Outcome, u64)>,
-) -> Snapshot {
-    let settled = settled.map(|(step, kind, outcome, attempt)| Settlement {
-        action: Action::new(ActionKey::new(ID, step, kind), AttemptId::from_raw(attempt)),
-        outcome,
-    });
-    Snapshot {
-        id: ID,
-        scope: 0,
-        progress,
-        issued,
-        settled,
-    }
-}
-
 #[test]
 fn sound_snapshots_are_accepted() {
     use Kind::{Compensate, Forward as Fwd};
@@ -166,7 +147,6 @@ fn unsound_snapshots_are_refused() {
         ),
         // An attempt this scope did not issue within the count.
         saved(Progress::Forward(1), 1, Some((0, Fwd, Success, 2))),
-        saved(Progress::Forward(1), 1, Some((0, Fwd, Success, 0))),
         saved(
             Progress::Forward(1),
             1,
@@ -174,7 +154,6 @@ fn unsound_snapshots_are_refused() {
         ),
         // Too few attempts to have got there.
         saved(Progress::Complete, 2, Some((1, Fwd, Success, 1))),
-        saved(Progress::Compensating(0), 2, Some((1, Fwd, Failure, 0))),
         // A count beyond a scope's sequence.
         saved(Progress::Forward(0), 1 << 48, None),
     ];
@@ -194,4 +173,41 @@ fn unsound_snapshots_are_refused() {
         Saga::<0>::restored(saved(Progress::Aborted, 0, None), 0),
         None
     );
+}
+
+/// `Snapshot::new` refuses what no saga of any step count can have saved;
+/// the rest depends on the steps and is left to `restored`.
+#[test]
+fn a_snapshot_is_built_only_from_what_a_scope_can_have_saved() {
+    use Kind::Forward as Fwd;
+    use Outcome::Success;
+    let built = |snapshot: Snapshot| {
+        Snapshot::new(
+            snapshot.id,
+            snapshot.scope,
+            snapshot.progress,
+            snapshot.issued,
+            snapshot.settled,
+        )
+    };
+    let sound = saved(Progress::Forward(1), 1, Some((0, Fwd, Success, 1)));
+    assert_eq!(built(sound), Some(sound));
+    // Not restorable for two steps, but a value of its own right.
+    let early = saved(Progress::Complete, 2, Some((0, Fwd, Success, 1)));
+    assert_eq!(built(early), Some(early));
+    let refused = [
+        saved(Progress::Forward(1), 1, Some((0, Fwd, Success, 2))),
+        saved(
+            Progress::Forward(1),
+            1,
+            Some((0, Fwd, Success, (1 << 48) | 1)),
+        ),
+        saved(Progress::Forward(0), 1 << 48, None),
+    ];
+    for snapshot in refused {
+        assert_eq!(built(snapshot), None, "{snapshot:?}");
+    }
+    let mut other = sound;
+    other.id = SagaId::from_raw(8);
+    assert_eq!(built(other), None);
 }
