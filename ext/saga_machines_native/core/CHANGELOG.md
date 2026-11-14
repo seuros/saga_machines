@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.5.0...saga-machines-v0.6.0) (2026-11-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* adopt matryona-machines 0.2: exact field reads and compiler-checked symbol tables
+
+### Features
+
+* adopt matryona-machines 0.2: exact field reads and compiler-checked symbol tables ([6f4f73a](https://github.com/seuros/saga_machines/commit/6f4f73a37a2d9f6a48a93490d244aa7a172fb58d))
+
 ## [0.5.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.4.0...saga-machines-v0.5.0) (2026-11-14)
 
 
