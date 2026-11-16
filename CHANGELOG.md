@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/seuros/saga_machines/compare/saga_machines/v0.6.1...saga_machines/v0.6.2) (2026-11-16)
+
+
+### Bug Fixes
+
+* fix wrapped classes at load so building a value runs no Ruby ([beec500](https://github.com/seuros/saga_machines/commit/beec500f4fa295f22556cdcbf543a263dddea9c3))
+
 ## [0.6.1](https://github.com/seuros/saga_machines/compare/saga_machines/v0.6.0...saga_machines/v0.6.1) (2026-11-16)
 
 
