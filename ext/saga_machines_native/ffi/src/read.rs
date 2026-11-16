@@ -2,9 +2,9 @@
 //! otherwise, a subclass included); its fields are read natively and checked
 //! again by the core's constructors (`RangeError`), so a forged value never
 //! reaches the core and never earns a refusal symbol.
-use magnus::{Error, Ruby, Value};
+use magnus::{Error, Ruby, Value, value::ReprValue};
 use matryona_machines::ruby::{
-    Choice, Symbols, exact_fields, integer, optional_fields, symbol_or_fields,
+    Choice, Refused, Symbols, exact_fields, integer, optional_fields, symbol_or_fields_why,
 };
 use saga_machines::{Action, ActionKey, AttemptId, Progress, SagaId, Settlement, Snapshot};
 
@@ -75,10 +75,13 @@ pub fn settlement_from(
 
 /// A Forward, a Compensating, `:complete` or `:aborted`.
 fn progress(ruby: &Ruby, classes: &Classes, value: Value) -> Result<Progress, Error> {
-    let message = "expected a Forward, a Compensating, :complete or :aborted";
     let steps = [classes.forward.get(ruby), classes.compensating.get(ruby)];
+    let message = |why: Refused<'_>| match why {
+        Refused::UnknownSymbol(symbol) => format!("unknown progress {}", symbol.inspect()),
+        _ => "expected a Forward, a Compensating, :complete or :aborted".into(),
+    };
     Ok(
-        match symbol_or_fields(ruby, value, Progresses, &steps, message)? {
+        match symbol_or_fields_why(ruby, value, Progresses, &steps, message)? {
             Choice::Symbol(progress) => progress,
             Choice::Struct(0, [step]) => Progress::Forward(names::step(step)?),
             Choice::Struct(_, [step]) => Progress::Compensating(names::step(step)?),

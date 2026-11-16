@@ -134,16 +134,17 @@ module SagaMachines
     # answers nil.
     def self.restored: (Integer steps, Snapshot snapshot, Integer scope) -> Saga
     # Private: the native constructors and what the Data values read.
-    def self.native_with_scope: (Integer steps, SagaId id, Integer scope) -> Saga
-    def self.native_restored: (Integer steps, Snapshot saved, Integer scope) -> Saga
-    def self.native_scope_of: (Integer raw) -> Integer
-    def self.native_from_bytes: (String name) -> Integer
-    def self.native_saga_id: (Integer raw) -> Integer
-    def self.native_step: (Integer step) -> Integer
-    def self.native_key: (SagaId saga, Integer step, kind kind) -> nil
-    def self.native_action: (ActionKey key, AttemptId attempt) -> nil
-    def self.native_settlement: (Action action, outcome outcome) -> nil
-    def self.native_snapshot: (SagaId id, Integer scope, progress progress, Integer issued, Settlement? settled) -> nil
+    private def self.native_with_scope: (Integer steps, SagaId id, Integer scope) -> Saga
+    private def self.native_restored: (Integer steps, Snapshot saved, Integer scope) -> Saga
+    private def self.native_scope_of: (Integer raw) -> Integer
+    private def self.native_scope_of_attempt: (AttemptId attempt) -> Integer
+    private def self.native_from_bytes: (String name) -> Integer
+    private def self.native_saga_id: (Integer raw) -> Integer
+    private def self.native_step: (Integer step) -> Integer
+    private def self.native_key: (SagaId saga, Integer step, kind kind) -> nil
+    private def self.native_action: (ActionKey key, AttemptId attempt) -> nil
+    private def self.native_settlement: (Action action, outcome outcome) -> nil
+    private def self.native_snapshot: (SagaId id, Integer scope, progress progress, Integer issued, Settlement? settled) -> nil
 
     def steps: () -> Integer
     def id: () -> SagaId

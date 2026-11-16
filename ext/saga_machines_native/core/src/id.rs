@@ -25,11 +25,11 @@ impl SagaId {
     #[must_use]
     pub const fn from_bytes(bytes: &[u8]) -> Self {
         let mut hash = FNV_OFFSET_BASIS;
-        let mut index = 0;
-        while index < bytes.len() {
-            hash ^= bytes[index] as u64;
+        let mut rest = bytes;
+        while let [byte, tail @ ..] = rest {
+            hash ^= *byte as u64;
             hash = hash.wrapping_mul(FNV_PRIME);
-            index += 1;
+            rest = tail;
         }
         Self(hash)
     }

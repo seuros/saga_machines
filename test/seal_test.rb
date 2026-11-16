@@ -95,20 +95,32 @@ class SealTest < Minitest::Test
                 Snapshot => %i[id scope progress issued settled] }
     originals = readers.flat_map { |klass, names| names.map { [klass, it, klass.instance_method(it)] } }
     begin
-      originals.each { |klass, name, _| klass.define_method(name) { raise "#{name} reader ran" } }
+      originals.each { |klass, name, _| replace_method(klass, name, proc { raise "#{name} reader ran" }) }
       resolved = saga.resolve(action, :success)
     ensure
-      originals.each { |klass, name, reader| klass.define_method(name, reader) }
+      originals.each { |klass, name, reader| replace_method(klass, name, (reader if reader.owner == klass)) }
     end
     assert_equal :resolved, resolved
     snapshot = saga.snapshot
     begin
-      originals.each { |klass, name, _| klass.define_method(name) { raise "#{name} reader ran" } }
+      originals.each { |klass, name, _| replace_method(klass, name, proc { raise "#{name} reader ran" }) }
       restored = Saga.restored(2, snapshot, 4)
     ensure
-      originals.each { |klass, name, reader| klass.define_method(name, reader) }
+      originals.each { |klass, name, reader| replace_method(klass, name, (reader if reader.owner == klass)) }
     end
     assert_equal snapshot, restored.snapshot
+  end
+
+  # `AttemptId#scope` reads the attempt natively: a redefined reader is
+  # never called, and a `raw` `Marshal.load` rewrote to sequence zero is
+  # RangeError.
+  def test_scope_reads_the_attempt_natively
+    attempt = AttemptId.new((5 << 48) | 1)
+    redefining(AttemptId, raw: proc { raise 'raw reader ran' }) { assert_equal 5, attempt.scope }
+    zero = Marshal.load(Marshal.dump(AttemptId.new(1)).sub("i\x06", "i\x00"))
+    assert_equal 0, zero.raw
+    assert_raises(RangeError) { zero.scope }
+    refute_respond_to Saga, :native_scope_of_attempt
   end
 
   # The classes the extension resolved at init are pinned: after a

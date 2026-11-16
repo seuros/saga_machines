@@ -14,6 +14,10 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     class.define_singleton_method("native_with_scope", function!(Wrapper::with_scope, 3))?;
     class.define_singleton_method("native_restored", function!(Wrapper::restored, 3))?;
     class.define_singleton_method("native_scope_of", function!(hooks::attempt_scope, 1))?;
+    class.define_singleton_method(
+        "native_scope_of_attempt",
+        function!(hooks::scope_of_attempt, 1),
+    )?;
     class.define_singleton_method("native_saga_id", function!(hooks::saga_id, 1))?;
     class.define_singleton_method("native_step", function!(hooks::step, 1))?;
     class.define_singleton_method("native_key", function!(hooks::check_key, 3))?;

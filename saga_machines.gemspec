@@ -6,8 +6,10 @@ Gem::Specification.new do |spec|
   spec.version = SagaMachines::VERSION
   spec.authors = ['Abdelkader Boudih']
   spec.email = ['oss@seuros.com']
-  spec.summary = 'Initial native sequential saga and reverse compensation policies'
-  spec.description = 'Local unstable saga model, not a durable workflow or exactly-once runtime.'
+  spec.summary = 'Saga coordination with reverse compensation, over a native Rust core'
+  spec.description = 'Tells you which saga step to run next and, when one fails, walks back through the ' \
+                     'completed steps in reverse to compensate them. The bookkeeping comes from the no_std ' \
+                     'saga-machines crate; the steps, their effects and their durability stay yours.'
   spec.homepage = 'https://github.com/seuros/saga_machines'
   spec.license = 'MIT'
   spec.required_ruby_version = '>= 4.0.0'

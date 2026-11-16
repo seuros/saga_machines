@@ -36,7 +36,8 @@ module SagaMachines
     end
 
     # The scope of the saga that issued this attempt.
-    def scope = Saga.__send__(:native_scope_of, raw)
+    # Read natively from the struct, never through the reader.
+    def scope = Saga.__send__(:native_scope_of_attempt, self)
   end
 
   # The core's `ActionKey`: which saga (a SagaId), which step, which kind
@@ -159,7 +160,7 @@ module SagaMachines
       # saga of these steps can have reached.
       def restored(steps, snapshot, scope) = native_restored(steps, snapshot, scope)
 
-      private :native_with_scope, :native_restored, :native_scope_of, :native_from_bytes,
+      private :native_with_scope, :native_restored, :native_scope_of, :native_scope_of_attempt, :native_from_bytes,
               :native_saga_id, :native_step, :native_key, :native_action, :native_settlement,
               :native_snapshot
     end

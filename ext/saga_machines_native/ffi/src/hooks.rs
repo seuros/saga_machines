@@ -15,9 +15,16 @@ pub fn saga_id(raw: Value) -> Result<u64, Error> {
     integer(raw, "raw")
 }
 
-/// `AttemptId.new` and `AttemptId#scope`: the scope of a buildable attempt.
+/// `AttemptId.new`: the scope of a buildable attempt.
 pub fn attempt_scope(ruby: &Ruby, raw: Value) -> Result<u16, Error> {
     names::attempt(ruby, raw).map(AttemptId::scope)
+}
+
+/// `AttemptId#scope`: the attempt read natively, exactly an `AttemptId`
+/// with its `raw` from the struct and checked again, never through the
+/// reader.
+pub fn scope_of_attempt(ruby: &Ruby, value: Value) -> Result<u16, Error> {
+    read::attempt_id(ruby, classes(ruby)?, value).map(AttemptId::scope)
 }
 
 /// `Forward.new`, `Compensating.new`: a step.

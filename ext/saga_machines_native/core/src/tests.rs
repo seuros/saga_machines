@@ -165,6 +165,14 @@ fn a_repeated_resolve_of_the_last_settlement_is_honoured() {
 }
 
 #[test]
+fn identities_from_bytes_are_fnv_1a() {
+    // Published FNV-1a 64-bit test vectors.
+    assert_eq!(SagaId::from_bytes(b"").raw(), 0xcbf2_9ce4_8422_2325);
+    assert_eq!(SagaId::from_bytes(b"a").raw(), 0xaf63_dc4c_8601_ec8c);
+    assert_eq!(SagaId::from_bytes(b"foobar").raw(), 0x8594_4171_f739_67e8);
+}
+
+#[test]
 fn identities_hash_deterministically_and_rebuild_from_parts() {
     let id = SagaId::from_bytes(b"manifest-42");
     assert_eq!(id, SagaId::from_bytes(b"manifest-42"));

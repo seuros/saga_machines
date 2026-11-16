@@ -108,6 +108,8 @@ pub const fn unwound(step: usize) -> Progress {
 
 /// Where a saga of `N` steps stands right after `settlement`.
 pub const fn advanced<const N: usize>(settlement: Settlement) -> Progress {
+    // Only an action this saga issued, or one `soonest` placed in the
+    // workflow, is settled: `step < N`, so `step + 1` cannot overflow.
     let step = settlement.action.step();
     match (settlement.action.kind(), settlement.outcome) {
         (Kind::Forward, Outcome::Success) if step + 1 == N => Progress::Complete,
@@ -128,6 +130,7 @@ pub const fn advanced<const N: usize>(settlement: Settlement) -> Progress {
 /// number and settles nothing.
 const fn soonest<const N: usize>(action: Action) -> Option<u64> {
     let step = action.step();
+    // Each arm's guard keeps `step` below `N`, or below `N - 1` for `+ 2`.
     let attempts = match action.kind() {
         Kind::Forward if step < N => step + 1,
         Kind::Compensate if step < N.saturating_sub(1) => step + 2,
