@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/seuros/saga_machines/compare/saga-machines-v0.6.0...saga-machines-v0.6.1) (2026-11-16)
+
+
+### Bug Fixes
+
+* AttemptId#scope reads the attempt natively, not via #raw ([5baf58f](https://github.com/seuros/saga_machines/commit/5baf58f3f457275e16bd066017df3451c979c84e))
+
 ## [0.6.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.5.0...saga-machines-v0.6.0) (2026-11-14)
 
 
