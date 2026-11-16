@@ -6,6 +6,7 @@ use crate::{AttemptId, LedgerRefusal, SagaId};
 
 /// Direction of a saga action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Kind {
     /// Perform a forward step.
     Forward,
@@ -15,6 +16,7 @@ pub enum Kind {
 
 /// Known external effect outcome, never an uncertain timeout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Outcome {
     /// The requested effect is complete.
     Success,
@@ -30,6 +32,7 @@ pub enum Outcome {
 /// It is built from the caller's [`SagaId`] and is not an issued id: anyone
 /// may build one, and it proves nothing to [`Saga::resolve`](crate::Saga::resolve).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ActionKey {
     saga: SagaId,
     step: usize,
@@ -69,6 +72,7 @@ impl ActionKey {
 /// [`Action::new`] when the reply arrives. The saga honours it only if the
 /// attempt is one it issued and the key is the one it issued it for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Action {
     key: ActionKey,
     attempt: AttemptId,

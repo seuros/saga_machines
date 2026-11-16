@@ -8,6 +8,7 @@ use crate::{Action, Kind, Outcome, Progress, SagaId};
 /// [`Saga::resolve`](crate::Saga::resolve) of that one action and to refuse a
 /// contradicting one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Settlement {
     /// The action that was resolved.
     pub action: Action,
@@ -21,6 +22,7 @@ pub struct Settlement {
 /// with [`Snapshot::new`]; what depends on the number of steps is checked by
 /// [`Saga::restored`](crate::Saga::restored).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Snapshot {
     pub(crate) id: SagaId,
     pub(crate) scope: u16,
@@ -86,6 +88,36 @@ impl Snapshot {
     #[must_use]
     pub const fn settled(&self) -> Option<Settlement> {
         self.settled
+    }
+}
+
+/// A snapshot as stored, before [`Snapshot::new`] checks it.
+#[cfg(feature = "serde")]
+#[derive(serde::Deserialize)]
+#[serde(rename = "Snapshot", deny_unknown_fields)]
+struct Stored {
+    id: SagaId,
+    scope: u16,
+    progress: Progress,
+    issued: u64,
+    settled: Option<Settlement>,
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Snapshot {
+    /// The stored fields, checked as [`Snapshot::new`] checks them; what
+    /// depends on the number of steps is left to
+    /// [`Saga::restored`](crate::Saga::restored).
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let stored = Stored::deserialize(deserializer)?;
+        Self::new(
+            stored.id,
+            stored.scope,
+            stored.progress,
+            stored.issued,
+            stored.settled,
+        )
+        .ok_or_else(|| serde::de::Error::custom("a snapshot no saga of this id and scope can save"))
     }
 }
 

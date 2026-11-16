@@ -11,6 +11,8 @@ const FNV_PRIME: u64 = 0x0100_0000_01b3;
 /// [`ActionKey`](crate::ActionKey). Keeping it unique within one ledger is
 /// the caller's job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct SagaId(u64);
 
 impl SagaId {
@@ -51,6 +53,7 @@ impl SagaId {
 /// the saga never issued is [`Refusal::Stale`](crate::Refusal::Stale).
 /// Every `AttemptId` has a sequence of at least one: no saga issues zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize), serde(transparent))]
 pub struct AttemptId(u64);
 
 impl AttemptId {
@@ -83,5 +86,15 @@ impl AttemptId {
     #[must_use]
     pub const fn scope(self) -> u16 {
         scope_of(self.0)
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for AttemptId {
+    /// The integer form, checked as [`AttemptId::from_raw`] checks it.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = <u64 as serde::Deserialize>::deserialize(deserializer)?;
+        Self::from_raw(raw)
+            .ok_or_else(|| serde::de::Error::custom("an attempt id has a sequence of at least one"))
     }
 }

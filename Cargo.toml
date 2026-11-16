@@ -13,6 +13,8 @@ rb-sys = { version = "0.9.130", default-features = false, features = ["stable-ap
 dedup-machines = ">=0.8"
 periscope-machines = ">=0.5"
 matryona-machines = { version = ">=0.6", default-features = false }
+serde = { version = "1.0.229", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.154", default-features = false, features = ["alloc"] }
 [workspace.lints.rust]
 unsafe_code = "deny"
 unused_must_use = "warn"

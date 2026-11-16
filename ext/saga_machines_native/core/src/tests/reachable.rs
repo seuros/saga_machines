@@ -10,7 +10,7 @@ use periscope_machines::scoped;
 
 use super::*;
 
-const SCOPE: u16 = 4;
+pub(super) const SCOPE: u16 = 4;
 const OTHER_SCOPE: u16 = 5;
 const OTHER_ID: SagaId = SagaId::from_raw(8);
 
@@ -23,7 +23,7 @@ fn name<T: core::fmt::Debug>(value: &T) -> String {
 }
 
 /// Every saga reachable from a fresh one within `ISSUED_MAX` attempts.
-fn walk<const N: usize>() -> Vec<Saga<N>> {
+pub(super) fn walk<const N: usize>() -> Vec<Saga<N>> {
     let mut seen = BTreeSet::new();
     let mut found = Vec::new();
     let mut queue = Vec::from([Saga::<N>::with_scope(ID, SCOPE)]);

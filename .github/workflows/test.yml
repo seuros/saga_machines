@@ -50,10 +50,10 @@ jobs:
             abort "Cargo.lock pins sibling crates without a registry source: #{stray.join(", ")}" unless stray.empty?
           '
       - name: Lint the workspace
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Test the core crate
-        run: cargo test --workspace
+        run: cargo test --workspace --all-features
 
       - name: Run doc tests
         run: cargo test --workspace --doc
@@ -81,8 +81,8 @@ jobs:
       - name: Build and lint on bare metal
         working-directory: ${{ steps.crates.outputs.core }}
         run: |
-          cargo build --target thumbv7em-none-eabihf
-          cargo clippy --target thumbv7em-none-eabihf -- -D warnings
+          cargo build --target thumbv7em-none-eabihf --all-features
+          cargo clippy --target thumbv7em-none-eabihf --all-features -- -D warnings
 
   ruby:
     runs-on: ubuntu-latest

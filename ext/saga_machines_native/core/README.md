@@ -139,5 +139,12 @@ are private, read through `id()`, `scope()`, `progress()`, `issued()` and
 `settled()`, so `Snapshot::new` is the only way to build one; `Saga::restored`
 checks what depends on the step count.
 
+**Serde.** The optional `serde` feature makes `Snapshot`, `Settlement`,
+`Action`, `ActionKey`, `AttemptId`, `SagaId`, `Kind`, `Outcome` and
+`Progress` serializable, so a snapshot and the action persisted before its
+effect can be stored as data. Reading one back runs the same checks as
+building it: an `AttemptId` of sequence zero or a snapshot `Snapshot::new`
+refuses fails to deserialize, and `Saga::restored` still judges the rest.
+
 **Time.** The saga reads no clock and takes none. `claim_in` passes `now` and
 `ttl` to the ledger as `core::time::Duration`.

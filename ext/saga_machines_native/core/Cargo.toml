@@ -9,10 +9,15 @@ readme = "README.md"
 exclude = ["src/**/tests.rs", "src/tests/", "tests/"]
 keywords = ["saga", "compensation", "workflow", "idempotency", "no-std"]
 categories = ["no-std", "algorithms"]
+[features]
+default = []
+serde = ["dep:serde"]
 [dependencies]
 dedup-machines.workspace = true
 periscope-machines.workspace = true
+serde = { workspace = true, optional = true }
 [dev-dependencies]
 matryona-machines = { workspace = true, features = ["testing"] }
+serde_json.workspace = true
 [lints]
 workspace = true

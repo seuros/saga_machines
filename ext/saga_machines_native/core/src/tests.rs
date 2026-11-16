@@ -6,6 +6,8 @@ use super::*;
 
 mod ledger;
 mod model;
+#[cfg(feature = "serde")]
+mod persisted;
 mod reachable;
 mod refusals;
 mod restore;

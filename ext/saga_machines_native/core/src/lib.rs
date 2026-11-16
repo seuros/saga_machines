@@ -17,6 +17,7 @@ pub use snapshot::{Settlement, Snapshot};
 
 /// Workflow progress, excluding any unresolved issued attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Progress {
     /// Next forward step.
     Forward(usize),
