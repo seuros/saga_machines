@@ -1,6 +1,7 @@
 //! Private native entry point.
 use crate::{STEPS, Wrapper, from_bytes, hooks};
 use magnus::{Error, Ruby, function, method, prelude::*};
+use matryona_machines::ruby::Class;
 
 #[magnus::init]
 fn init(ruby: &Ruby) -> Result<(), Error> {
@@ -31,5 +32,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     class.define_private_method("native_pending", method!(Wrapper::pending, 0))?;
     class.define_method("cancel", method!(Wrapper::cancel, 0))?;
     class.define_method("steps", method!(Wrapper::steps, 0))?;
-    Ok(())
+    // `native_with_scope` and `native_restored` answer a Saga: its class is
+    // fixed now, so building one never runs `Object.const_get`.
+    Class::pin_wrapped::<Wrapper>(ruby, class).map(drop)
 }
