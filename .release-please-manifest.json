@@ -1,5 +1,5 @@
 {
-  ".": "0.6.2",
-  "ext/saga_machines_native/core": "0.6.1",
-  "ext/saga_machines_native/ffi": "0.1.9"
+  ".": "0.6.3",
+  "ext/saga_machines_native/core": "0.7.0",
+  "ext/saga_machines_native/ffi": "0.1.10"
 }

@@ -271,7 +271,7 @@ checksum = "6b1e7f9a428571be2dc5bc0505c13fb6bf936822b894ec87abf8a08a4e51742d"
 
 [[package]]
 name = "saga-machines"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
  "dedup-machines",
  "matryona-machines",
@@ -282,7 +282,7 @@ dependencies = [
 
 [[package]]
 name = "saga_machines_native"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "magnus",
  "matryona-machines",

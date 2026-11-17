@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.3](https://github.com/seuros/saga_machines/compare/saga_machines/v0.6.2...saga_machines/v0.6.3) (2026-11-16)
+
+
+### Features
+
+* optional serde for snapshots and actions ([a46bd46](https://github.com/seuros/saga_machines/commit/a46bd46a3c02f11ed87c73ed8c0118fa60b17393))
+
 ## [0.6.2](https://github.com/seuros/saga_machines/compare/saga_machines/v0.6.1...saga_machines/v0.6.2) (2026-11-16)
 
 
