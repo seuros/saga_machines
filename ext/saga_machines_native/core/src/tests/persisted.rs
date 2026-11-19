@@ -85,7 +85,8 @@ fn a_stored_value_no_saga_saves_is_refused() {
     let settled = |scope: u16, issued: u64, saga: u64, attempt: u64| {
         format!(
             concat!(
-                r#"{{"id":7,"scope":{},"progress":{{"Forward":1}},"issued":{},"skipped":0,"settled":"#,
+                r#"{{"id":7,"scope":{},"progress":{{"Forward":1}},"issued":{},"#,
+                r#""skipped":0,"settled":"#,
                 r#"{{"action":{{"key":{{"saga":{},"step":0,"kind":"Forward"}},"attempt":{}}},"#,
                 r#""outcome":"Success"}}}}"#
             ),
