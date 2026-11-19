@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.0](https://github.com/seuros/saga_machines/compare/saga_machines/v0.6.3...saga_machines/v0.7.0) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ruby:** :skipped and :stuck outcomes, Stuck progress, Snapshot#skipped
+* **core:** Outcome::Skipped and Outcome::Stuck, terminal Progress::Stuck
+
+### Features
+
+* **core:** Outcome::Skipped and Outcome::Stuck, terminal Progress::Stuck ([4ebdefe](https://github.com/seuros/saga_machines/commit/4ebdefe1c6a819479296293edf0f211aadc1b021))
+* **ruby:** :skipped and :stuck outcomes, Stuck progress, Snapshot#skipped ([e3c4fd6](https://github.com/seuros/saga_machines/commit/e3c4fd6a4c1763de9b22520bfb3c966c8698d054))
+
 ## [0.6.3](https://github.com/seuros/saga_machines/compare/saga_machines/v0.6.2...saga_machines/v0.6.3) (2026-11-16)
 
 
