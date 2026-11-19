@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.8.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.7.0...saga-machines-v0.8.0) (2026-11-19)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** Outcome::Skipped and Outcome::Stuck, terminal Progress::Stuck
+
+### Features
+
+* **core:** Outcome::Skipped and Outcome::Stuck, terminal Progress::Stuck ([4ebdefe](https://github.com/seuros/saga_machines/commit/4ebdefe1c6a819479296293edf0f211aadc1b021))
+
 ## [0.7.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.6.1...saga-machines-v0.7.0) (2026-11-16)
 
 
