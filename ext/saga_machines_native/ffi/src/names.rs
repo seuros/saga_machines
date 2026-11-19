@@ -24,6 +24,8 @@ matryona_machines::symbols! {
     pub Outcomes for Outcome as "outcome" {
         Success => "success",
         Failure => "failure",
+        Skipped => "skipped",
+        Stuck => "stuck",
     }
 }
 
@@ -33,6 +35,7 @@ matryona_machines::symbols! {
     pub Progresses for Progress as "progress" => names_only {
         Forward(..) => "forward",
         Compensating(..) => "compensating",
+        Stuck(..) => "stuck",
         Complete => "complete",
         Aborted => "aborted",
     }
@@ -46,6 +49,7 @@ matryona_machines::symbols! {
         Mismatch => "mismatch",
         Busy => "busy",
         Concluded => "concluded",
+        Inapplicable => "inapplicable",
     }
 }
 
@@ -74,7 +78,9 @@ pub fn settled_row(ruby: &Ruby, settled: Settlement) -> (u64, usize, Symbol, u64
 
 pub fn progress_row(ruby: &Ruby, progress: Progress) -> (Symbol, Option<usize>) {
     let step = match progress {
-        Progress::Forward(step) | Progress::Compensating(step) => Some(step),
+        Progress::Forward(step) | Progress::Compensating(step) | Progress::Stuck(step) => {
+            Some(step)
+        }
         Progress::Complete | Progress::Aborted => None,
     };
     (symbol(ruby, Progresses::name(&progress)), step)

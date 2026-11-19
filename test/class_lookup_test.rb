@@ -17,7 +17,7 @@ class ClassLookupTest < Minitest::Test
     require 'saga_machines'
     S = SagaMachines
     ID = S::SagaId.new(7)
-    SAVED = S::Snapshot.new(ID, 0, S::Forward.new(0), 0, nil)
+    SAVED = S::Snapshot.new(ID, 0, S::Forward.new(0), 0, 0, nil)
   RUBY
 
   # Runs `body` after PRELUDE in a new Ruby; answers its last line of output.

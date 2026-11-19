@@ -8,7 +8,7 @@ require_relative 'test_helper'
 class SealTest < Minitest::Test
   include SagaHelpers
 
-  VALUES = [SagaId, AttemptId, ActionKey, Action, Forward, Compensating, Settlement, Snapshot].freeze
+  VALUES = [SagaId, AttemptId, ActionKey, Action, Forward, Compensating, Stuck, Settlement, Snapshot].freeze
 
   # A named subclass raises too, but Ruby binds the constant before
   # `inherited` runs: the class leaks, and can be reopened to skip the check.
@@ -54,7 +54,7 @@ class SealTest < Minitest::Test
     assert_raises(TypeError) { Action.new(fake_key, action.attempt) }
     assert_raises(TypeError) { Settlement.new(fake_action, :success) }
     assert_raises(RangeError) { Settlement.new(zero, :success) }
-    assert_raises(TypeError) { Snapshot.new(ID, 0, leak(Forward).new(step: 0), 0, nil) }
+    assert_raises(TypeError) { Snapshot.new(ID, 0, leak(Forward).new(step: 0), 0, 0, nil) }
     assert_equal :resolved, saga.resolve(action, :success)
   end
 
@@ -81,7 +81,7 @@ class SealTest < Minitest::Test
     snapshot = saga.snapshot
     settled = Settlement.new(opened.(snapshot.settled.action), snapshot.settled.outcome)
     rebuilt = Snapshot.new(opened.(snapshot.id), snapshot.scope, opened.(snapshot.progress), snapshot.issued,
-                           opened.(settled))
+                           snapshot.skipped, opened.(settled))
     assert_equal snapshot, Saga.restored(2, opened.(rebuilt), 4).snapshot
   end
 
@@ -92,7 +92,7 @@ class SealTest < Minitest::Test
     action = saga.next_action
     readers = { SagaId => %i[raw], AttemptId => %i[raw], ActionKey => %i[saga step kind], Action => %i[key attempt],
                 Settlement => %i[action outcome], Forward => %i[step],
-                Snapshot => %i[id scope progress issued settled] }
+                Snapshot => %i[id scope progress issued skipped settled] }
     originals = readers.flat_map { |klass, names| names.map { [klass, it, klass.instance_method(it)] } }
     begin
       originals.each { |klass, name, _| replace_method(klass, name, proc { raise "#{name} reader ran" }) }

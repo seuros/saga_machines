@@ -24,7 +24,7 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     class.define_singleton_method("native_key", function!(hooks::check_key, 3))?;
     class.define_singleton_method("native_action", function!(hooks::check_action, 2))?;
     class.define_singleton_method("native_settlement", function!(hooks::check_settlement, 2))?;
-    class.define_singleton_method("native_snapshot", function!(hooks::check_snapshot, 5))?;
+    class.define_singleton_method("native_snapshot", function!(hooks::check_snapshot, 6))?;
     class.define_singleton_method("native_from_bytes", function!(from_bytes, 1))?;
     class.define_method("next_action", method!(Wrapper::next_action, 0))?;
     class.define_private_method("native_resolve", method!(Wrapper::resolve, 2))?;

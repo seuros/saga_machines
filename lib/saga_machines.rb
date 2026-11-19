@@ -63,8 +63,9 @@ module SagaMachines
     def kind = key.kind
   end
 
-  # The core's `Progress::Forward(step)` and `Progress::Compensating(step)`.
-  # The other two variants are the symbols :complete and :aborted.
+  # The core's `Progress::Forward(step)`, `Progress::Compensating(step)` and
+  # `Progress::Stuck(step)`. The other two variants are the symbols :complete
+  # and :aborted.
   stepped = proc do
     def initialize(step:)
       Saga.__send__(:native_step, step)
@@ -73,9 +74,10 @@ module SagaMachines
   end
   Forward = Data.define(:step, &stepped)
   Compensating = Data.define(:step, &stepped)
+  Stuck = Data.define(:step, &stepped)
 
   # The core's `Settlement`: the last action resolved and the outcome
-  # (:success or :failure) it was resolved with.
+  # (:success, :failure, :skipped or :stuck) it was resolved with.
   Settlement = Data.define(:action, :outcome) do
     def initialize(action:, outcome:)
       Saga.__send__(:native_settlement, action, outcome)
@@ -84,14 +86,15 @@ module SagaMachines
   end
 
   # The core's `Snapshot`: everything a saga saves, in the core's field
-  # order. `progress` is a Forward, a Compensating, :complete or :aborted;
-  # `settled` a Settlement or nil. Built through `Snapshot::new`: RangeError
+  # order. `progress` is a Forward, a Compensating, a Stuck, :complete or
+  # :aborted; `skipped` the Integer set of skipped forward steps (bit `i` for
+  # step `i`); `settled` a Settlement or nil. Built through `Snapshot::new`: RangeError
   # for an `issued` past 2**48-1, or a settlement of another saga, another
   # scope or an attempt beyond `issued`. What depends on the number of steps
   # is checked by `Saga.restored`.
-  Snapshot = Data.define(:id, :scope, :progress, :issued, :settled) do
-    def initialize(id:, scope:, progress:, issued:, settled:)
-      Saga.__send__(:native_snapshot, id, scope, progress, issued, settled)
+  Snapshot = Data.define(:id, :scope, :progress, :issued, :skipped, :settled) do
+    def initialize(id:, scope:, progress:, issued:, skipped:, settled:)
+      Saga.__send__(:native_snapshot, id, scope, progress, issued, skipped, settled)
       super
     end
   end
@@ -117,6 +120,7 @@ module SagaMachines
       case name
       when :forward then Forward.new(step)
       when :compensating then Compensating.new(step)
+      when :stuck then Stuck.new(step)
       else name
       end
     end
@@ -126,8 +130,8 @@ module SagaMachines
     end
 
     def snapshot(row)
-      id, scope, progress, issued, settled = row
-      Snapshot.new(SagaId.new(id), scope, progress(*progress), issued, settled(settled))
+      id, scope, progress, issued, skipped, settled = row
+      Snapshot.new(SagaId.new(id), scope, progress(*progress), issued, skipped, settled(settled))
     end
   end
   private_constant :Wire
@@ -141,7 +145,7 @@ module SagaMachines
   # the check), so the extension is the authority: every value it reads back
   # must be exactly its class and is checked again, TypeError or RangeError
   # otherwise.
-  [SagaId, AttemptId, ActionKey, Action, Forward, Compensating, Settlement, Snapshot].each do |value|
+  [SagaId, AttemptId, ActionKey, Action, Forward, Compensating, Stuck, Settlement, Snapshot].each do |value|
     value.singleton_class.undef_method(:allocate)
     value.define_singleton_method(:inherited) { |_| raise TypeError, "#{value} cannot be subclassed" }
   end
@@ -168,6 +172,7 @@ module SagaMachines
     def id = snapshot.id
     def scope = snapshot.scope
     def issued = snapshot.issued
+    def skipped = snapshot.skipped
     def progress = snapshot.progress
     def settled = snapshot.settled
 

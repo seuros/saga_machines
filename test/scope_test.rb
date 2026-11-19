@@ -36,7 +36,7 @@ class ScopeTest < Minitest::Test
     first = run_step(saga, :success)
     lost = saga.next_action
     saved = saga.snapshot
-    assert_equal Snapshot.new(ID, 4, Forward.new(1), 2, Settlement.new(first, :success)), saved
+    assert_equal Snapshot.new(ID, 4, Forward.new(1), 2, 0, Settlement.new(first, :success)), saved
 
     restored = Saga.restored(3, saved, 4)
     assert_equal [saved, nil], [restored.snapshot, restored.pending]
@@ -71,7 +71,7 @@ class ScopeTest < Minitest::Test
     done = Saga.new(1, ID)
     run_step(done, :success)
     assert_equal :complete, Saga.restored(1, done.snapshot, 0).progress
-    assert_equal :aborted, Saga.restored(1, Snapshot.new(ID, 0, :aborted, 0, nil), 0).progress
+    assert_equal :aborted, Saga.restored(1, Snapshot.new(ID, 0, :aborted, 0, 0, nil), 0).progress
   end
 
   def test_unsound_saved_state_raises
@@ -103,7 +103,7 @@ class ScopeTest < Minitest::Test
       -> { saved.with(issued: 0) }, -> { saved.with(issued: 2**48) },
       -> { saved.with(id: SagaId.new(8)) }, -> { saved.with(scope: 5) },
       -> { saved.with(settled: Settlement.new(first.with(attempt: AttemptId.new(1)), :success)) },
-      -> { Snapshot.new(ID, 0, Forward.new(1), 0, Settlement.new(action(0, :forward, 1), :success)) }
+      -> { Snapshot.new(ID, 0, Forward.new(1), 0, 0, Settlement.new(action(0, :forward, 1), :success)) }
     ].each { |build| assert_raises(RangeError) { build.call } }
     # Not restorable for two steps, but a value in its own right.
     assert_equal Forward.new(0), saved.with(progress: Forward.new(0)).progress
@@ -113,25 +113,25 @@ class ScopeTest < Minitest::Test
   # progress instead of the settlement.
   def test_a_snapshot_no_saga_can_produce_raises
     undone = lambda do |issued, attempt|
-      Snapshot.new(ID, 0, :aborted, issued, Settlement.new(action(0, :compensate, attempt), :success))
+      Snapshot.new(ID, 0, :aborted, issued, 0, Settlement.new(action(0, :compensate, attempt), :success))
     end
     done = Settlement.new(action(0, :forward, 1), :success)
     unsound = [
       # Attempt 1 is the forward try of step 0, never its compensation.
       [2, undone.call(1, 1)],
       # Nothing is issued after a settlement that finished the saga.
-      [2, undone.call(3, 2)], [1, Snapshot.new(ID, 0, :complete, 2, done)],
-      [0, Snapshot.new(ID, 0, :complete, 1, nil)]
+      [2, undone.call(3, 2)], [1, Snapshot.new(ID, 0, :complete, 2, 0, done)],
+      [0, Snapshot.new(ID, 0, :complete, 1, 0, nil)]
     ]
     unsound.each do |steps, snapshot|
       error = assert_raises(RangeError, snapshot.inspect) { Saga.restored(steps, snapshot, 0) }
       assert_match(/saved state/, error.message)
     end
     sound = [
-      [2, undone.call(2, 2)], [2, undone.call(9, 9)], [1, Snapshot.new(ID, 0, :complete, 1, done)],
-      [0, Snapshot.new(ID, 0, :complete, 0, nil)],
+      [2, undone.call(2, 2)], [2, undone.call(9, 9)], [1, Snapshot.new(ID, 0, :complete, 1, 0, done)],
+      [0, Snapshot.new(ID, 0, :complete, 0, 0, nil)],
       # A cancel settles nothing: attempts lost to restarts may precede it.
-      [2, Snapshot.new(ID, 0, :aborted, 5, nil)]
+      [2, Snapshot.new(ID, 0, :aborted, 5, 0, nil)]
     ]
     sound.each { |steps, snapshot| assert_equal snapshot, Saga.restored(steps, snapshot, 0).snapshot }
   end
@@ -149,8 +149,8 @@ class ScopeTest < Minitest::Test
     error = assert_raises(TypeError) { Saga.restored(2, saved.with(settled: [1, :success]), 0) }
     assert_equal 'expected a SagaMachines::Settlement or nil', error.message
     [0, Forward, action(0, :forward, 1)].each do |progress|
-      error = assert_raises(TypeError) { Snapshot.new(ID, 0, progress, 0, nil) }
-      assert_equal 'expected a Forward, a Compensating, :complete or :aborted', error.message
+      error = assert_raises(TypeError) { Snapshot.new(ID, 0, progress, 0, 0, nil) }
+      assert_equal 'expected a Forward, a Compensating, a Stuck, :complete or :aborted', error.message
     end
     assert_raises(TypeError) { Saga.restored(2, saved, '0') }
     %i[forward compensating paused].each do |progress|

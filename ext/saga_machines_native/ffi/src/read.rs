@@ -13,8 +13,8 @@ use crate::{
     names::{self, Kinds, Outcomes, Progresses},
 };
 
-/// `Snapshot`'s five fields, in the core's order.
-pub type SnapshotFields = [Value; 5];
+/// `Snapshot`'s six fields, in the core's order.
+pub type SnapshotFields = [Value; 6];
 
 pub fn saga_id(ruby: &Ruby, classes: &Classes, value: Value) -> Result<SagaId, Error> {
     let message = "expected a SagaMachines::SagaId";
@@ -73,39 +73,45 @@ pub fn settlement_from(
     })
 }
 
-/// A Forward, a Compensating, `:complete` or `:aborted`.
+/// A Forward, a Compensating, a Stuck, `:complete` or `:aborted`.
 fn progress(ruby: &Ruby, classes: &Classes, value: Value) -> Result<Progress, Error> {
-    let steps = [classes.forward.get(ruby), classes.compensating.get(ruby)];
+    let steps = [
+        classes.forward.get(ruby),
+        classes.compensating.get(ruby),
+        classes.stuck.get(ruby),
+    ];
     let message = |why: Refused<'_>| match why {
         Refused::UnknownSymbol(symbol) => format!("unknown progress {}", symbol.inspect()),
-        _ => "expected a Forward, a Compensating, :complete or :aborted".into(),
+        _ => "expected a Forward, a Compensating, a Stuck, :complete or :aborted".into(),
     };
     Ok(
         match symbol_or_fields_why(ruby, value, Progresses, &steps, message)? {
             Choice::Symbol(progress) => progress,
             Choice::Struct(0, [step]) => Progress::Forward(names::step(step)?),
-            Choice::Struct(_, [step]) => Progress::Compensating(names::step(step)?),
+            Choice::Struct(1, [step]) => Progress::Compensating(names::step(step)?),
+            Choice::Struct(_, [step]) => Progress::Stuck(names::step(step)?),
         },
     )
 }
 
-/// A `Snapshot` from its five fields, through `Snapshot::new`: what
+/// A `Snapshot` from its six fields, through `Snapshot::new`: what
 /// `Snapshot.new` checks.
 pub fn snapshot_from(
     ruby: &Ruby,
     classes: &Classes,
-    [id, scope, at, issued, settled]: SnapshotFields,
+    [id, scope, at, issued, skipped, settled]: SnapshotFields,
 ) -> Result<Snapshot, Error> {
     let id = saga_id(ruby, classes, id)?;
     let scope = integer(scope, "scope")?;
     let at = progress(ruby, classes, at)?;
     let issued = integer(issued, "issued")?;
+    let skipped = integer(skipped, "skipped")?;
     let message = "expected a SagaMachines::Settlement or nil";
     let class = classes.settlement.get(ruby);
     let settled = optional_fields::<2>(ruby, settled, class, message)?
         .map(|fields| settlement_from(ruby, classes, fields))
         .transpose()?;
-    Snapshot::new(id, scope, at, issued, settled).ok_or_else(|| {
+    Snapshot::new(id, scope, at, issued, skipped, settled).ok_or_else(|| {
         Error::new(
             ruby.exception_range_error(),
             "issued must be in 0..2**48-1 and the settlement this saga's, of its scope, \
@@ -116,6 +122,6 @@ pub fn snapshot_from(
 
 pub fn snapshot(ruby: &Ruby, classes: &Classes, value: Value) -> Result<Snapshot, Error> {
     let message = "expected a SagaMachines::Snapshot";
-    let fields = exact_fields::<5>(ruby, value, classes.snapshot.get(ruby), message)?;
+    let fields = exact_fields::<6>(ruby, value, classes.snapshot.get(ruby), message)?;
     snapshot_from(ruby, classes, fields)
 }

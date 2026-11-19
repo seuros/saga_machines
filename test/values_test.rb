@@ -25,7 +25,7 @@ class ValuesTest < Minitest::Test
     assert_raises(RangeError) { ActionKey.new(ID, 0, :sideways) }
     assert_raises(TypeError) { Action.new(key, 1) }
     assert_raises(TypeError) { Action.new([7, 0, :forward], AttemptId.new(1)) }
-    [Forward, Compensating].each do |variant|
+    [Forward, Compensating, Stuck].each do |variant|
       assert_raises(TypeError) { variant.new(nil) }
       assert_raises(RangeError) { variant.new(-1) }
       assert_equal 3, variant.new(3).step

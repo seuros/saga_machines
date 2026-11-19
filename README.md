@@ -178,6 +178,38 @@ saga.resolve(again, :success)      # => :resolved
 
 The old attempt can't advance the saga. Repeating the report you already made is fine and changes nothing; contradicting it is `:mismatch`; and once `again` is resolved, `undo` is simply `:stale`. A late reply to a retry you already moved on from gets nowhere, no matter how convincing it looks.
 
+### A step that doesn't apply
+
+Some steps are conditional: no VNET, no dataset, no lease to take. Report those `:skipped`. The saga advances as if it had succeeded, and it never compensates a step that did nothing.
+
+```ruby
+saga = SagaMachines::Saga.new(3, SagaMachines::SagaId.new(7))
+saga.resolve(saga.next_action, :success)   # step 0 did something
+saga.resolve(saga.next_action, :skipped)   # step 1 did not apply
+saga.skipped                               # => 0b010
+
+failed = saga.next_action                  # step 2
+saga.resolve(failed, :failure)
+saga.progress                              # => Compensating(step=0), step 1 is stepped over
+```
+
+`:skipped` only answers a forward action, and `:stuck` (below) only a compensation: the other pairing is `:inapplicable`. A skipped step is a settlement like any other, so it keeps the stale protection: the same report again is `:already_resolved`, the other outcome `:mismatch`, and once a newer action settles it is `:stale`. `skipped` (and `snapshot.skipped`) is an Integer set, bit `i` for step `i`.
+
+### A compensation that won't go
+
+Retrying forever is not a plan. When a compensation can't be completed, report it `:stuck` and the saga parks:
+
+```ruby
+undo = saga.next_action
+saga.resolve(undo, :stuck)   # => :resolved
+saga.progress                # => #<data SagaMachines::Stuck step=0>
+saga.next_action             # => nil, nothing more is issued
+saga.cancel                  # => :concluded
+saga.resolve(undo, :stuck)   # => :already_resolved
+```
+
+`Stuck(step)` is terminal and in the snapshot, so a restart finds it still stuck. Marking the resource leaked and paging someone is your job.
+
 ### Changing your mind
 
 `cancel` is allowed between actions, never during one. If a step is in flight, you don't get to pretend it isn't.
@@ -231,7 +263,7 @@ The scope is not part of the `key`. The idempotency identity has to survive ever
 A restart must not rewind the sequence, or an attempt that outlived it would name a new try. Save the snapshot after every answer and hand it back:
 
 ```ruby
-saved = saga.snapshot   # => Snapshot(id, scope, progress, issued, settled)
+saved = saga.snapshot   # => Snapshot(id, scope, progress, issued, skipped, settled)
 saga = SagaMachines::Saga.restored(3, saved, 7)   # => a Saga, or RangeError
 ```
 
@@ -243,14 +275,14 @@ Honoured answers say what happened. Refusals are symbols, one per reason, and a 
 
 | Call | Honoured | Refusals |
 | --- | --- | --- |
-| `next_action` | an `Action`; `nil` once `:complete` or `:aborted` | `:exhausted` |
-| `resolve(action, outcome)` | `:resolved`, `:already_resolved` | `:stale`, `:mismatch` |
+| `next_action` | an `Action`; `nil` once `:complete`, `:aborted` or stuck | `:exhausted` |
+| `resolve(action, outcome)` | `:resolved`, `:already_resolved` | `:stale`, `:inapplicable`, `:mismatch` |
 | `cancel` | `:cancelled`, `:already_unwinding` | `:concluded`, `:busy` |
-| `progress` | `Forward(step)`, `Compensating(step)`, `:complete`, `:aborted` | |
+| `progress` | `Forward(step)`, `Compensating(step)`, `Stuck(step)`, `:complete`, `:aborted` | |
 | `pending` | an `Action` or `nil` | |
 | `settled` | a `Settlement(action, outcome)` or `nil` | |
-| `snapshot` | a `Snapshot(id, scope, progress, issued, settled)` | |
-| `id`, `scope`, `issued`, `steps` | a `SagaId`; Integers | |
+| `snapshot` | a `Snapshot(id, scope, progress, issued, skipped, settled)` | |
+| `id`, `scope`, `issued`, `skipped`, `steps` | a `SagaId`; Integers | |
 | `Saga.new(steps, id)`, `Saga.with_scope(steps, id, scope)` | a `Saga` | none: raises on malformed input |
 | `Saga.restored(steps, snapshot, scope)` | a `Saga` | none: raises `RangeError` for saved state that isn't that saga's |
 
@@ -262,7 +294,8 @@ What each refusal means:
 - `:stale`: the attempt isn't one this saga can act on. It carries another scope or was never issued (answered before anything is looked up), or it's an earlier attempt that is neither pending nor the last one resolved.
 - `:mismatch`: the attempt is the pending one or the last one resolved, but the action's key or the outcome isn't what the saga recorded. The record stands.
 - `:busy`: a forward action is unresolved, so there's no cancelling yet.
-- `:concluded`: the saga is `:complete`. There's nothing to cancel.
+- `:inapplicable`: `:skipped` on a compensation, or `:stuck` on a forward action. Answered right after the never-issued `:stale` check, whatever the attempt.
+- `:concluded`: the saga is `:complete` or stuck. There's nothing to cancel.
 
 Repeats that are honoured, because the saga can prove them:
 

@@ -5,9 +5,12 @@ module SagaMachines
   STEPS: Array[Integer]
 
   type kind = :forward | :compensate
-  type outcome = :success | :failure
+  # Known effects only. `:skipped` answers a forward action (done without
+  # effect, never compensated); `:stuck` answers a compensation (parks the
+  # saga). The other pairing is :inapplicable.
+  type outcome = :success | :failure | :skipped | :stuck
   # The core's `Progress`: tuple variants as Data, unit variants as symbols.
-  type progress = Forward | Compensating | :complete | :aborted
+  type progress = Forward | Compensating | Stuck | :complete | :aborted
 
   # Every Data value validates at construction, built by the gem or by hand:
   # TypeError for the wrong class, RangeError for a value the core rejects.
@@ -73,6 +76,14 @@ module SagaMachines
                 | (step: Integer) -> Compensating
   end
 
+  # The core's `Progress::Stuck(step)`: the compensation of `step` was
+  # reported :stuck. Terminal.
+  class Stuck < Data
+    attr_reader step: Integer
+    def self.new: (Integer step) -> Stuck
+                | (step: Integer) -> Stuck
+  end
+
   # Mirrors the core's `Settlement`.
   class Settlement < Data
     attr_reader action: Action
@@ -90,9 +101,11 @@ module SagaMachines
     attr_reader scope: Integer
     attr_reader progress: progress
     attr_reader issued: Integer
+    # The skipped forward steps: bit `i` is set for step `i`.
+    attr_reader skipped: Integer
     attr_reader settled: Settlement?
-    def self.new: (SagaId id, Integer scope, progress progress, Integer issued, Settlement? settled) -> Snapshot
-                | (id: SagaId, scope: Integer, progress: progress, issued: Integer, settled: Settlement?) -> Snapshot
+    def self.new: (SagaId id, Integer scope, progress progress, Integer issued, Integer skipped, Settlement? settled) -> Snapshot
+                | (id: SagaId, scope: Integer, progress: progress, issued: Integer, skipped: Integer, settled: Settlement?) -> Snapshot
   end
 
   # Private: Data values from the rows the native readers answer.
@@ -107,7 +120,7 @@ module SagaMachines
     # Every refusal symbol, one per core `Refusal` variant, no catch-all. A
     # refused call changed nothing. Each method below lists exactly the ones
     # it can answer.
-    type refusal = :exhausted | :stale | :mismatch | :busy | :concluded
+    type refusal = :exhausted | :stale | :mismatch | :busy | :concluded | :inapplicable
 
     # Ids, steps, counts and raw attempts are Integers; a non-Integer raises
     # TypeError, a negative or too large one RangeError. A value of the wrong
@@ -144,7 +157,7 @@ module SagaMachines
     private def self.native_key: (SagaId saga, Integer step, kind kind) -> nil
     private def self.native_action: (ActionKey key, AttemptId attempt) -> nil
     private def self.native_settlement: (Action action, outcome outcome) -> nil
-    private def self.native_snapshot: (SagaId id, Integer scope, progress progress, Integer issued, Settlement? settled) -> nil
+    private def self.native_snapshot: (SagaId id, Integer scope, progress progress, Integer issued, Integer skipped, Settlement? settled) -> nil
 
     def steps: () -> Integer
     def id: () -> SagaId
@@ -152,6 +165,9 @@ module SagaMachines
     # How many attempts this saga has issued; also the sequence number of the
     # latest one.
     def issued: () -> Integer
+    # The skipped forward steps: bit `i` is set for step `i`. Never
+    # compensated.
+    def skipped: () -> Integer
     def progress: () -> progress
     # The issued action that is not resolved yet.
     def pending: () -> Action?
@@ -161,8 +177,8 @@ module SagaMachines
     # Everything to save; the pending action is not part of it.
     def snapshot: () -> Snapshot
 
-    # A drain: the next Action, or nil once the saga is :complete or
-    # :aborted. While an action is pending it answers that same action and
+    # A drain: the next Action, or nil once the saga is :complete, :aborted or
+    # stuck. While an action is pending it answers that same action and
     # changes nothing. :exhausted when work remains but every attempt of the
     # scope has been issued. Decided on a copy and kept only once the Action
     # is built and the saga is still unfrozen and unchanged: should building
@@ -172,14 +188,16 @@ module SagaMachines
     # Honoured: :resolved for the pending action, or :already_resolved for
     # the last settled action reported with the same outcome again (a repeat
     # that changes nothing). :stale for an attempt this saga never issued
-    # comes first; then :mismatch when the attempt is the pending or the last
+    # comes first; then :inapplicable for an outcome that cannot answer the
+    # action's kind (:skipped on a compensation, :stuck on a forward action);
+    # then :mismatch when the attempt is the pending or the last
     # settled one but the key or the outcome differs; then :stale for any
     # other attempt.
     def resolve: (Action action, outcome outcome)
-                 -> (:resolved | :already_resolved | :stale | :mismatch)
+                 -> (:resolved | :already_resolved | :stale | :inapplicable | :mismatch)
     # Honoured: :cancelled between forward actions, or :already_unwinding
     # when the saga is already compensating or aborted (a repeat that changes
-    # nothing). :concluded for a complete saga; :busy while a forward action
+    # nothing). :concluded for a complete or stuck saga; :busy while a forward action
     # is unresolved.
     def cancel: () -> (:cancelled | :already_unwinding | :concluded | :busy)
 

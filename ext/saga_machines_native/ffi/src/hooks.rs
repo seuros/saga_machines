@@ -42,7 +42,7 @@ pub fn check_action(ruby: &Ruby, key: Value, attempt: Value) -> Result<(), Error
     read::action_from(ruby, classes(ruby)?, [key, attempt]).map(drop)
 }
 
-/// `Settlement.new`: exactly an `Action`, and `:success` or `:failure`.
+/// `Settlement.new`: exactly an `Action`, and one of the outcome symbols.
 pub fn check_settlement(ruby: &Ruby, action: Value, outcome: Value) -> Result<(), Error> {
     read::settlement_from(ruby, classes(ruby)?, [action, outcome]).map(drop)
 }
@@ -54,9 +54,10 @@ pub fn check_snapshot(
     scope: Value,
     progress: Value,
     issued: Value,
+    skipped: Value,
     settled: Value,
 ) -> Result<(), Error> {
-    let fields: SnapshotFields = [id, scope, progress, issued, settled];
+    let fields: SnapshotFields = [id, scope, progress, issued, skipped, settled];
     read::snapshot_from(ruby, classes(ruby)?, fields).map(drop)
 }
 

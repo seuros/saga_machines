@@ -8,7 +8,7 @@ class RefusalsTest < Minitest::Test
   LAST = 2**48 - 1
 
   def test_exhaustion_is_a_refusal_and_not_the_terminal_answer
-    saved = Snapshot.new(ID, 3, Forward.new(0), LAST - 1, nil)
+    saved = Snapshot.new(ID, 3, Forward.new(0), LAST - 1, 0, nil)
     saga = Saga.restored(1, saved, 3)
     last = saga.next_action
     assert_equal (3 << 48) | LAST, last.attempt.raw

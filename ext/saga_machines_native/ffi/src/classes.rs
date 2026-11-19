@@ -11,6 +11,7 @@ pub struct Classes {
     pub action: Class,
     pub forward: Class,
     pub compensating: Class,
+    pub stuck: Class,
     pub settlement: Class,
     pub snapshot: Class,
 }
@@ -32,6 +33,7 @@ pub fn resolve(ruby: &Ruby, module: RModule) -> Result<(), Error> {
         action: class("Action")?,
         forward: class("Forward")?,
         compensating: class("Compensating")?,
+        stuck: class("Stuck")?,
         settlement: class("Settlement")?,
         snapshot: class("Snapshot")?,
     };

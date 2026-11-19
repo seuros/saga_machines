@@ -203,6 +203,7 @@ impl Wrapper {
             snapshot.scope(),
             progress,
             snapshot.issued(),
+            snapshot.skipped(),
             settled,
         );
         fields.into_value_with(ruby)
