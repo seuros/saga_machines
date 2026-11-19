@@ -19,8 +19,12 @@ pub enum Refusal {
     /// A forward action is unresolved; its effect cannot be forgotten, so the
     /// saga cannot be cancelled until it is resolved.
     Busy,
-    /// Every forward step succeeded; a complete saga cannot be cancelled.
+    /// The saga is finished going anywhere: every forward step went through,
+    /// or a compensation is stuck. It cannot be cancelled.
     Concluded,
+    /// The outcome cannot answer this kind of action: `Skipped` answers only
+    /// a forward action, `Stuck` only a compensation.
+    Inapplicable,
 }
 
 impl fmt::Display for Refusal {
@@ -30,7 +34,8 @@ impl fmt::Display for Refusal {
             Self::Stale => "the attempt is not one this saga can act on",
             Self::Mismatch => "the call disagrees with what is recorded for this attempt",
             Self::Busy => "a forward action is unresolved",
-            Self::Concluded => "the saga is complete",
+            Self::Concluded => "the saga is complete or stuck",
+            Self::Inapplicable => "the outcome does not apply to this kind of action",
         })
     }
 }

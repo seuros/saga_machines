@@ -22,6 +22,28 @@ pub enum Outcome {
     Success,
     /// The requested effect did not occur.
     Failure,
+    /// Forward only: the step does not apply and nothing was done. The saga
+    /// advances as for [`Outcome::Success`], and the step is never
+    /// compensated.
+    Skipped,
+    /// Compensation only: the undo cannot be completed and will not be
+    /// retried. The saga stops at [`Progress::Stuck`](crate::Progress::Stuck).
+    Stuck,
+}
+
+impl Outcome {
+    /// Whether a reply with this outcome can answer an action of `kind`:
+    /// [`Outcome::Skipped`] only a forward action, [`Outcome::Stuck`] only a
+    /// compensation, the other two either.
+    #[must_use]
+    pub const fn applies_to(self, kind: Kind) -> bool {
+        match (self, kind) {
+            (Self::Success | Self::Failure, Kind::Forward | Kind::Compensate)
+            | (Self::Skipped, Kind::Forward)
+            | (Self::Stuck, Kind::Compensate) => true,
+            (Self::Skipped, Kind::Compensate) | (Self::Stuck, Kind::Forward) => false,
+        }
+    }
 }
 
 /// Idempotency identity of one piece of work: which saga, step and direction.

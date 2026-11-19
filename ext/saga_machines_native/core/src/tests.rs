@@ -6,6 +6,7 @@ use super::*;
 
 mod ledger;
 mod model;
+mod outcomes;
 #[cfg(feature = "serde")]
 mod persisted;
 mod reachable;
@@ -35,6 +36,7 @@ fn saved(
         scope: 0,
         progress,
         issued,
+        skipped: 0,
         settled,
     }
 }
@@ -212,6 +214,7 @@ fn refusals_format_and_are_errors() {
         Refusal::Mismatch,
         Refusal::Busy,
         Refusal::Concluded,
+        Refusal::Inapplicable,
     ];
     for (index, refusal) in all.iter().enumerate() {
         let error: &dyn core::error::Error = refusal;

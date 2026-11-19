@@ -187,6 +187,7 @@ fn a_snapshot_is_built_only_from_what_a_scope_can_have_saved() {
             snapshot.scope,
             snapshot.progress,
             snapshot.issued,
+            snapshot.skipped,
             snapshot.settled,
         )
     };

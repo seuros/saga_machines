@@ -18,6 +18,13 @@ const OTHER_ID: SagaId = SagaId::from_raw(8);
 /// steps (three forward, a failure, two compensations) with retries to spare.
 const ISSUED_MAX: u64 = 9;
 
+const OUTCOMES: [Outcome; 4] = [
+    Outcome::Success,
+    Outcome::Failure,
+    Outcome::Skipped,
+    Outcome::Stuck,
+];
+
 fn name<T: core::fmt::Debug>(value: &T) -> String {
     format!("{value:?}")
 }
@@ -34,11 +41,17 @@ pub(super) fn walk<const N: usize>() -> Vec<Saga<N>> {
         let mut issuing = saga.clone();
         issuing.next_action().expect("not exhausted");
         queue.push(issuing);
-        for outcome in [Outcome::Success, Outcome::Failure] {
+        for outcome in OUTCOMES {
             let mut resolving = saga.clone();
             if let Some(action) = saga.pending() {
-                assert_eq!(resolving.resolve(action, outcome), Ok(Resolution::Resolved));
-                queue.push(resolving);
+                if outcome.applies_to(action.kind()) {
+                    assert_eq!(resolving.resolve(action, outcome), Ok(Resolution::Resolved));
+                    queue.push(resolving);
+                } else {
+                    refuses(&mut resolving, Refusal::Inapplicable, |saga| {
+                        saga.resolve(action, outcome)
+                    });
+                }
             }
         }
         let mut cancelling = saga.clone();
@@ -60,7 +73,7 @@ fn settlements<const N: usize>() -> Vec<Option<Settlement>> {
     for step in 0..=N {
         for sequence in 1..=ISSUED_MAX + 1 {
             for kind in [Kind::Forward, Kind::Compensate] {
-                for outcome in [Outcome::Success, Outcome::Failure] {
+                for outcome in OUTCOMES {
                     for (id, scope) in [(ID, SCOPE), (OTHER_ID, SCOPE), (ID, OTHER_SCOPE)] {
                         let attempt = attempt(scoped(scope, sequence));
                         let action = Action::new(ActionKey::new(id, step, kind), attempt);
@@ -78,6 +91,7 @@ fn progresses<const N: usize>() -> Vec<Progress> {
     for step in 0..=N {
         all.push(Progress::Forward(step));
         all.push(Progress::Compensating(step));
+        all.push(Progress::Stuck(step));
     }
     all
 }
@@ -92,21 +106,25 @@ fn exact<const N: usize>() -> (usize, usize) {
     for progress in progresses::<N>() {
         for issued in 0..=ISSUED_MAX {
             for settled in settlements::<N>() {
-                let snapshot = Snapshot {
-                    id: ID,
-                    scope: SCOPE,
-                    progress,
-                    issued,
-                    settled,
-                };
-                let restored = Saga::<N>::restored(snapshot, SCOPE);
-                let expected = reachable.contains(&name(&snapshot));
-                assert_eq!(restored.is_some(), expected, "N = {N}: {snapshot:?}");
-                if let Some(saga) = restored {
-                    assert_eq!((saga.snapshot(), saga.pending()), (snapshot, None));
-                    accepted += 1;
-                } else {
-                    refused += 1;
+                // Every set over the steps, and the first set beyond them.
+                for skipped in 0..=1_u64 << N {
+                    let snapshot = Snapshot {
+                        id: ID,
+                        scope: SCOPE,
+                        progress,
+                        issued,
+                        skipped,
+                        settled,
+                    };
+                    let restored = Saga::<N>::restored(snapshot, SCOPE);
+                    let expected = reachable.contains(&name(&snapshot));
+                    assert_eq!(restored.is_some(), expected, "N = {N}: {snapshot:?}");
+                    if let Some(saga) = restored {
+                        assert_eq!((saga.snapshot(), saga.pending()), (snapshot, None));
+                        accepted += 1;
+                    } else {
+                        refused += 1;
+                    }
                 }
             }
         }

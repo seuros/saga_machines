@@ -5,10 +5,13 @@
 Engine-room flight manual: chart forward maneuvers and compensating return legs.
 
 Allocation-free `no_std` sequential saga decisions. Successful forward steps are
-compensated in reverse order after a known forward failure. A failed compensation
-stays at the same step for a fresh retry attempt; a stale reply cannot advance
-progress. Every step is assumed compensatable. Cancellation is allowed only
-between forward actions, never by forgetting an unresolved external effect.
+compensated in reverse order after a known forward failure. A step that does
+not apply is reported `Skipped`: it advances like a success and is never
+compensated. A failed compensation stays at the same step for a fresh retry
+attempt, until the caller reports it `Stuck` and the saga parks at
+`Progress::Stuck`; a stale reply cannot advance progress. Every step that ran
+is assumed compensatable. Cancellation is allowed only between forward
+actions, never by forgetting an unresolved external effect.
 
 ```rust
 use core::time::Duration;
@@ -60,12 +63,12 @@ issued count; the saga equals a clone taken before the call.
 | Call | Honoured | Refusals |
 | --- | --- | --- |
 | `next_action()` | `Some(Action)`; `None` once complete or aborted | `Exhausted` |
-| `resolve(action, outcome)` | `Resolved`, `AlreadyResolved` | `Stale`, `Mismatch` |
+| `resolve(action, outcome)` | `Resolved`, `AlreadyResolved` | `Stale`, `Inapplicable`, `Mismatch` |
 | `cancel()` | `Cancelled`, `AlreadyUnwinding` | `Concluded`, `Busy` |
 | `Action::claim_in(ledger, now, ttl)` | the ledger's `Claim` | the ledger's `LedgerRefusal` |
 | `Saga::restored(snapshot, scope)` | `Some(Saga)` | `None` for unsound saved state |
 | `AttemptId::from_raw(raw)` | `Some(AttemptId)` | `None` for a sequence of zero |
-| `Snapshot::new(id, scope, progress, issued, settled)` | `Some(Snapshot)` | `None`, see below |
+| `Snapshot::new(id, scope, progress, issued, skipped, settled)` | `Some(Snapshot)` | `None`, see below |
 
 No answer records a clock: the saga takes none, and every answer holds
 whatever the time.
@@ -78,10 +81,48 @@ whatever the time.
 - `Mismatch`: the attempt is the pending one under another key, or the last
   settled one under another key or with another outcome. The record stands.
 - `Busy`: a forward action is unresolved, so the saga cannot be cancelled.
-- `Concluded`: the saga is complete and cannot be cancelled.
+- `Inapplicable`: the outcome cannot answer that kind of action, see
+  Outcomes below.
+- `Concluded`: the saga is complete or stuck and cannot be cancelled.
 
-`resolve` checks in this order: `Stale` (never issued), `Mismatch`, `Stale`
-(issued, but no longer current).
+`resolve` checks in this order: `Stale` (never issued), `Inapplicable`,
+`Mismatch`, `Stale` (issued, but no longer current). `Inapplicable` depends
+only on the action's kind and the outcome, so it is answered whatever the
+attempt, once the attempt is known to be this saga's.
+
+**Outcomes.** A reply is a known effect, never an uncertain timeout.
+
+| Outcome | Answers | Progress |
+| --- | --- | --- |
+| `Success` | either kind | forward: next step, or `Complete`; compensation: next unwind step, or `Aborted` |
+| `Failure` | either kind | forward: start the unwind; compensation: same step, fresh attempt |
+| `Skipped` | forward only | as `Success`; the step is recorded as skipped |
+| `Stuck` | compensation only | `Progress::Stuck(step)`, terminal |
+
+`Outcome::applies_to(kind)` answers which pairs are valid. A `Skipped`
+compensation or a `Stuck` forward action is `Inapplicable`.
+
+*Skipped.* The step did nothing (a conditional step that did not apply), so
+there is nothing to undo. The saga keeps a 64-bit set of skipped steps
+(`Saga::skipped`, `Snapshot::skipped`, bit `i` for step `i`), which is why a
+saga has at most 64 steps (a larger `N` fails to compile). The unwind, after a
+forward failure or a cancel, steps over skipped steps: no compensation is
+issued for them, so there is no reply path for one. A skipped step still
+takes a forward attempt and is a settlement like any other: the same attempt
+reported `Skipped` again is `AlreadyResolved` while it is the last
+settlement, reported `Success` it is `Mismatch`, and once a newer action
+settles it is `Stale`. A snapshot taken before the reply loses the pending
+attempt as usual, and the step is issued again under a fresh attempt.
+
+*Stuck.* A compensation that cannot be completed and must not be retried
+forever: the caller parks the work (marks the resource leaked, pages someone).
+`Progress::Stuck(step)` is terminal: no pending action, `next_action` answers
+`Ok(None)`, `cancel` is `Concluded`, and every reply is refused except the
+repeat of the stuck one, which is `AlreadyResolved`. It is in the snapshot,
+and `Saga::restored` accepts it only straight after a stuck compensation
+settlement, with nothing issued since. The steps that were never compensated
+are the caller's to read: `Stuck(step)` is the step that could not be undone,
+and every lower step that ran is still done.
 
 **Repeats.** Only what the saga can prove is honoured, and a repeat changes
 nothing.
@@ -108,7 +149,7 @@ saga whose replies could meet its own scope, and an attempt of another scope is
 the idempotency identity must survive a change of scope.
 
 **Restarts.** `Saga::snapshot` is the state to save: id, scope, progress,
-issued count and last settlement. `Saga::restored(snapshot, scope)` takes the
+issued count, skipped steps and last settlement. `Saga::restored(snapshot, scope)` takes the
 scope explicitly and answers `Some` for exactly the snapshots a saga of `N`
 steps in that scope can produce, `None` for every other: a snapshot of another
 scope, a count beyond 2^48 - 1, a progress that does not fit `N` steps, or a
@@ -116,7 +157,11 @@ settlement that is not this saga's or does not lead to the progress, directly
 or through a cancel. The settled attempt must be one the scope issued within
 the count, and not sooner than its action allows: sequence number at least
 `step + 1` for a forward action and `step + 2` for a compensation (retries and
-attempts lost to a restart only raise it). When the settlement itself
+attempts lost to a restart only raise it; a skipped step above the
+compensated one raises it to that step's forward attempt plus one). The skipped
+set must agree with the settlement (a skip sets its own step's bit, a success
+or a compensation leaves it clear, nothing beyond the steps reached) and with
+the progress (an unwind never targets a skipped step). When the settlement itself
 completed or aborted the saga the count must equal that sequence number, since
 no attempt is issued afterwards; only a saga cancelled before it settled
 anything is aborted with a free count. The pending action is not
@@ -135,8 +180,8 @@ the saga, and the ledger's answer comes back unchanged, honoured or refused.
 issues. `Snapshot::new` refuses what no saga of any step count can have
 saved: an `issued` past 2^48 - 1, or a settlement whose key names another
 saga or whose attempt is of another scope or beyond `issued`. Its fields
-are private, read through `id()`, `scope()`, `progress()`, `issued()` and
-`settled()`, so `Snapshot::new` is the only way to build one; `Saga::restored`
+are private, read through `id()`, `scope()`, `progress()`, `issued()`,
+`skipped()` and `settled()`, so `Snapshot::new` is the only way to build one; `Saga::restored`
 checks what depends on the step count.
 
 **Serde.** The optional `serde` feature makes `Snapshot`, `Settlement`,
@@ -145,6 +190,9 @@ checks what depends on the step count.
 effect can be stored as data. Reading one back runs the same checks as
 building it: an `AttemptId` of sequence zero or a snapshot `Snapshot::new`
 refuses fails to deserialize, and `Saga::restored` still judges the rest.
+Persist `Saga::snapshot()` after each honoured call and rebuild with
+`Saga::restored`; every field is required, so a snapshot stored before
+`skipped` existed does not read back.
 
 **Time.** The saga reads no clock and takes none. `claim_in` passes `now` and
 `ttl` to the ledger as `core::time::Duration`.

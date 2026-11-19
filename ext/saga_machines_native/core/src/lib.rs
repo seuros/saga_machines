@@ -27,6 +27,9 @@ pub enum Progress {
     Complete,
     /// All required compensations finished.
     Aborted,
+    /// The compensation of this step was reported [`Outcome::Stuck`]: nothing
+    /// more is issued and the saga is parked for the caller. Terminal.
+    Stuck(usize),
 }
 
 /// Honoured outcome of [`Saga::resolve`].
@@ -52,7 +55,7 @@ pub enum Cancellation {
 /// Fixed-step sequential workflow.
 ///
 /// Equality compares the whole value: identity, issued attempts, progress,
-/// the pending action and the last settlement. A refused call leaves the saga
+/// the pending action, the skipped steps and the last settlement. A refused call leaves the saga
 /// equal to a clone taken before it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Saga<const N: usize> {
@@ -61,6 +64,8 @@ pub struct Saga<const N: usize> {
     attempts: Issuer,
     progress: Progress,
     pending: Option<Action>,
+    /// Bit `i` is set when forward step `i` was skipped: never compensated.
+    skipped: u64,
     settled: Option<Settlement>,
 }
 
@@ -82,11 +87,13 @@ impl<const N: usize> Saga<N> {
     /// which stays the same in every scope.
     #[must_use]
     pub const fn with_scope(id: SagaId, scope: u16) -> Self {
+        const { assert!(N <= 64, "a saga tracks skipped steps in 64 bits") };
         Self {
             id,
             attempts: Issuer::new(scope),
             progress: snapshot::initial::<N>(),
             pending: None,
+            skipped: 0,
             settled: None,
         }
     }
@@ -120,6 +127,7 @@ impl<const N: usize> Saga<N> {
     ///   have any count, the attempts lost to restarts before the cancel.
     #[must_use]
     pub fn restored(snapshot: Snapshot, scope: u16) -> Option<Self> {
+        const { assert!(N <= 64, "a saga tracks skipped steps in 64 bits") };
         if snapshot.scope != scope {
             return None;
         }
@@ -129,6 +137,7 @@ impl<const N: usize> Saga<N> {
             attempts,
             progress: snapshot.progress,
             pending: None,
+            skipped: snapshot.skipped,
             settled: snapshot.settled,
         })
     }
@@ -142,6 +151,7 @@ impl<const N: usize> Saga<N> {
             scope: self.attempts.scope(),
             progress: self.progress,
             issued: self.attempts.issued(),
+            skipped: self.skipped,
             settled: self.settled,
         }
     }
@@ -171,6 +181,13 @@ impl<const N: usize> Saga<N> {
         self.progress
     }
 
+    /// The forward steps resolved [`Outcome::Skipped`]: bit `i` is set for
+    /// step `i`. They are never compensated.
+    #[must_use]
+    pub const fn skipped(&self) -> u64 {
+        self.skipped
+    }
+
     /// The issued action that is not resolved yet, if any.
     #[must_use]
     pub const fn pending(&self) -> Option<Action> {
@@ -186,11 +203,12 @@ impl<const N: usize> Saga<N> {
 
     /// The next piece of work: a drain over the workflow.
     ///
-    /// `Ok(None)` once the saga is [`Progress::Complete`] or
-    /// [`Progress::Aborted`]: nothing is left. While an action is pending,
-    /// the call is an idempotent repeat: it answers that same action, same
-    /// attempt, and changes nothing. Otherwise it issues a fresh attempt for
-    /// the step the progress points at.
+    /// `Ok(None)` once the saga is [`Progress::Complete`],
+    /// [`Progress::Aborted`] or [`Progress::Stuck`]: nothing is left. While
+    /// an action is pending, the call is an idempotent repeat: it answers
+    /// that same action, same attempt, and changes nothing. Otherwise it
+    /// issues a fresh attempt for the step the progress points at. A step
+    /// resolved [`Outcome::Skipped`] is never issued as a compensation.
     ///
     /// # Errors
     /// [`Refusal::Exhausted`] when work remains but every attempt of the
@@ -202,7 +220,7 @@ impl<const N: usize> Saga<N> {
         let (step, kind) = match self.progress {
             Progress::Forward(step) => (step, Kind::Forward),
             Progress::Compensating(step) => (step, Kind::Compensate),
-            Progress::Complete | Progress::Aborted => return Ok(None),
+            Progress::Complete | Progress::Aborted | Progress::Stuck(_) => return Ok(None),
         };
         let attempt = match self.attempts.issue() {
             Ok(raw) => AttemptId::issued(raw),
@@ -221,16 +239,31 @@ impl<const N: usize> Saga<N> {
     /// [`Resolution::AlreadyResolved`], whatever happened since (a cancel, a
     /// newer pending action); nothing changes.
     ///
+    /// [`Outcome::Skipped`] answers a forward action: the step is recorded as
+    /// done without effect, the progress advances as for success, and the
+    /// unwind steps over it. [`Outcome::Stuck`] answers a compensation: the
+    /// progress becomes [`Progress::Stuck`] at that step and the saga issues
+    /// nothing more. Either way the action is the last settlement, so the
+    /// same attempt is stale protection as for any other outcome: repeating
+    /// it with the same outcome is `AlreadyResolved`, with another
+    /// `Mismatch`, and once a newer action settles it is `Stale`. A stuck
+    /// saga has no pending action, so every reply but the repeat of the stuck
+    /// one is refused.
+    ///
     /// # Errors
     /// In this order: [`Refusal::Stale`] for an attempt this saga never
     /// issued (another scope, or a sequence it has not reached), before
-    /// anything is looked up; [`Refusal::Mismatch`] when the attempt is the
+    /// anything is looked up; [`Refusal::Inapplicable`] for an outcome that
+    /// cannot answer the action's kind, whatever the attempt; [`Refusal::Mismatch`] when the attempt is the
     /// pending one under another key, or the last settled one under another
     /// key or with another outcome; [`Refusal::Stale`] for any other attempt
     /// (an earlier one, or one that was pending when a snapshot was taken).
     pub fn resolve(&mut self, action: Action, outcome: Outcome) -> Result<Resolution, Refusal> {
         if !self.attempts.owns(action.attempt().raw()) {
             return Err(Refusal::Stale);
+        }
+        if !outcome.applies_to(action.kind()) {
+            return Err(Refusal::Inapplicable);
         }
         let report = Settlement { action, outcome };
         if let Some(pending) = self.pending
@@ -239,8 +272,13 @@ impl<const N: usize> Saga<N> {
             if pending != action {
                 return Err(Refusal::Mismatch);
             }
+            let skipped = snapshot::skipped_after(self.skipped, report);
+            let Some(progress) = snapshot::advanced::<N>(report, skipped) else {
+                return Err(Refusal::Inapplicable);
+            };
             self.pending = None;
-            self.progress = snapshot::advanced::<N>(report);
+            self.skipped = skipped;
+            self.progress = progress;
             self.settled = Some(report);
             return Ok(Resolution::Resolved);
         }
@@ -255,21 +293,22 @@ impl<const N: usize> Saga<N> {
     ///
     /// [`Cancellation::Cancelled`] between forward actions: the progress
     /// turns to compensating the last step that succeeded, or straight to
-    /// [`Progress::Aborted`] when none did. On a saga that is already
+    /// [`Progress::Aborted`] when none did; steps that were skipped did not
+    /// succeed with an effect and are passed over. On a saga that is already
     /// compensating or aborted the call is the idempotent repeat
     /// [`Cancellation::AlreadyUnwinding`], pending compensation or not;
     /// nothing changes.
     ///
     /// # Errors
-    /// [`Refusal::Concluded`] for a complete saga; [`Refusal::Busy`] while a
+    /// [`Refusal::Concluded`] for a complete or stuck saga; [`Refusal::Busy`] while a
     /// forward action is unresolved.
     pub const fn cancel(&mut self) -> Result<Cancellation, Refusal> {
         match self.progress {
             Progress::Compensating(_) | Progress::Aborted => Ok(Cancellation::AlreadyUnwinding),
-            Progress::Complete => Err(Refusal::Concluded),
+            Progress::Complete | Progress::Stuck(_) => Err(Refusal::Concluded),
             Progress::Forward(_) if self.pending.is_some() => Err(Refusal::Busy),
             Progress::Forward(step) => {
-                self.progress = snapshot::unwound(step);
+                self.progress = snapshot::unwound(step, self.skipped);
                 Ok(Cancellation::Cancelled)
             }
         }

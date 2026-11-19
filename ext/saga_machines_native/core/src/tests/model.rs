@@ -9,24 +9,38 @@ use super::*;
 const STEPS: usize = 4;
 const SCOPE: u16 = 6;
 
-/// The saga as two facts: how many steps stand done, and whether it unwinds.
+/// The saga as a few facts: how many steps stand done, which of them did
+/// nothing, whether it unwinds, and where a compensation got stuck.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Model {
     done: usize,
+    skipped: [bool; STEPS],
     unwinding: bool,
+    stuck: Option<usize>,
     pending: Option<Action>,
     settled: Option<(Action, Outcome)>,
     issued: u64,
 }
 
 impl Model {
-    const fn progress(&self) -> Progress {
+    fn progress(&self) -> Progress {
+        if let Some(step) = self.stuck {
+            return Progress::Stuck(step);
+        }
         match (self.unwinding, self.done) {
             (false, STEPS) => Progress::Complete,
             (false, done) => Progress::Forward(done),
-            (true, 0) => Progress::Aborted,
-            (true, done) => Progress::Compensating(done - 1),
+            (true, done) => (0..done)
+                .rev()
+                .find(|&step| !self.skipped[step])
+                .map_or(Progress::Aborted, Progress::Compensating),
         }
+    }
+
+    fn mask(&self) -> u64 {
+        (0..STEPS)
+            .filter(|&step| self.skipped[step])
+            .fold(0, |mask, step| mask | 1 << step)
     }
 
     fn next_action(&mut self) -> Option<Action> {
@@ -34,7 +48,7 @@ impl Model {
             let (step, kind) = match self.progress() {
                 Progress::Forward(step) => (step, Kind::Forward),
                 Progress::Compensating(step) => (step, Kind::Compensate),
-                Progress::Complete | Progress::Aborted => return None,
+                Progress::Complete | Progress::Aborted | Progress::Stuck(_) => return None,
             };
             self.issued += 1;
             let attempt = attempt((u64::from(SCOPE) << 48) | self.issued);
@@ -48,15 +62,30 @@ impl Model {
         if action.attempt().scope() != SCOPE || sequence == 0 || sequence > self.issued {
             return Err(Refusal::Stale);
         }
+        let fits = match outcome {
+            Outcome::Success | Outcome::Failure => true,
+            Outcome::Skipped => action.kind() == Kind::Forward,
+            Outcome::Stuck => action.kind() == Kind::Compensate,
+        };
+        if !fits {
+            return Err(Refusal::Inapplicable);
+        }
         if let Some(pending) = self.pending.filter(|p| p.attempt() == action.attempt()) {
             if pending.key() != action.key() {
                 return Err(Refusal::Mismatch);
             }
             match (action.kind(), outcome) {
                 (Kind::Forward, Outcome::Success) => self.done += 1,
+                (Kind::Forward, Outcome::Skipped) => {
+                    self.skipped[self.done] = true;
+                    self.done += 1;
+                }
                 (Kind::Forward, Outcome::Failure) => self.unwinding = true,
-                (Kind::Compensate, Outcome::Success) => self.done -= 1,
-                (Kind::Compensate, Outcome::Failure) => {}
+                (Kind::Compensate, Outcome::Success) => self.done = action.step(),
+                (Kind::Compensate, Outcome::Stuck) => self.stuck = Some(action.step()),
+                // A failed compensation changes nothing; the rest were refused above.
+                (Kind::Compensate, Outcome::Failure | Outcome::Skipped)
+                | (Kind::Forward, Outcome::Stuck) => {}
             }
             self.pending = None;
             self.settled = Some((action, outcome));
@@ -69,8 +98,10 @@ impl Model {
         }
     }
 
-    const fn cancel(&mut self) -> Result<Cancellation, Refusal> {
-        if self.unwinding {
+    fn cancel(&mut self) -> Result<Cancellation, Refusal> {
+        if self.stuck.is_some() {
+            Err(Refusal::Concluded)
+        } else if self.unwinding {
             Ok(Cancellation::AlreadyUnwinding)
         } else if self.done == STEPS {
             Err(Refusal::Concluded)
@@ -86,6 +117,7 @@ impl Model {
         assert_eq!(saga.progress(), self.progress());
         assert_eq!(saga.pending(), self.pending);
         assert_eq!(saga.issued(), self.issued);
+        assert_eq!(saga.skipped(), self.mask());
         let settled = saga
             .settled()
             .map(|settled| (settled.action, settled.outcome));
@@ -138,7 +170,12 @@ fn step(
         }
         3..=5 => {
             let action = pick(rng, saga, history);
-            let outcome = [Outcome::Success, Outcome::Failure][usize::from(rng.below(3) == 0)];
+            let outcome = match rng.below(12) {
+                0..=6 => Outcome::Success,
+                7..=8 => Outcome::Failure,
+                9..=10 => Outcome::Skipped,
+                _ => Outcome::Stuck,
+            };
             let expected = model.resolve(action, outcome);
             assert_eq!(
                 saga.resolve(action, outcome),
@@ -172,12 +209,14 @@ fn step(
 #[test]
 fn random_runs_agree_with_the_model() {
     let mut rng = XorShift64::new(0x9E37_79B9_7F4A_7C15);
-    let (mut complete, mut aborted) = (0, 0);
+    let (mut complete, mut aborted, mut stuck, mut skipped) = (0, 0, 0, 0);
     for _ in 0..400 {
         let mut saga = Saga::<STEPS>::with_scope(ID, SCOPE);
         let mut model = Model {
             done: 0,
+            skipped: [false; STEPS],
             unwinding: false,
+            stuck: None,
             pending: None,
             settled: None,
             issued: 0,
@@ -188,9 +227,11 @@ fn random_runs_agree_with_the_model() {
         }
         complete += u32::from(saga.progress() == Progress::Complete);
         aborted += u32::from(saga.progress() == Progress::Aborted);
+        stuck += u32::from(matches!(saga.progress(), Progress::Stuck(_)));
+        skipped += u32::from(saga.skipped() != 0);
     }
     assert!(
-        complete > 0 && aborted > 0,
-        "{complete} complete, {aborted} aborted"
+        complete > 0 && aborted > 0 && stuck > 0 && skipped > 0,
+        "{complete} complete, {aborted} aborted, {stuck} stuck, {skipped} skipping"
     );
 }
