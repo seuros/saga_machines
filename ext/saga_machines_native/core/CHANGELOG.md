@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.9.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.8.0...saga-machines-v0.9.0) (2026-11-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** Refusal has a new NotStuck variant; exhaustive matches fail to compile.
+
+### Features
+
+* **core:** unstick a parked compensation and reconcile in-flight work ([2e931e9](https://github.com/seuros/saga_machines/commit/2e931e9360abce903f6be561c6e003cceec4d763))
+
 ## [0.8.0](https://github.com/seuros/saga_machines/compare/saga-machines-v0.7.0...saga-machines-v0.8.0) (2026-11-19)
 
 

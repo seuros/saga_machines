@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/seuros/saga_machines/compare/saga_machines/v0.7.0...saga_machines/v0.8.0) (2026-11-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** Refusal has a new NotStuck variant; exhaustive matches fail to compile.
+
+### Features
+
+* **core:** unstick a parked compensation and reconcile in-flight work ([2e931e9](https://github.com/seuros/saga_machines/commit/2e931e9360abce903f6be561c6e003cceec4d763))
+* **ruby:** Saga#unstick and Saga#reconcile, :not_stuck refusal ([ea62d01](https://github.com/seuros/saga_machines/commit/ea62d01702e61ab265a4b02be639fe5a400bb61f))
+
 ## [0.7.0](https://github.com/seuros/saga_machines/compare/saga_machines/v0.6.3...saga_machines/v0.7.0) (2026-11-19)
 
 
