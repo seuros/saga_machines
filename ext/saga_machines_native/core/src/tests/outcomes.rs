@@ -1,5 +1,5 @@
 //! `Skipped` and `Stuck`: a skipped step is done without effect and never
-//! compensated; a stuck compensation parks the saga for good.
+//! compensated; a stuck compensation parks the saga until `unstick`.
 use super::*;
 
 /// The steps a saga issues as compensations until it stops, each resolved
@@ -177,7 +177,7 @@ fn a_skipped_pending_attempt_is_lost_to_a_restart() {
 }
 
 #[test]
-fn a_stuck_compensation_is_terminal() {
+fn a_stuck_compensation_parks_the_saga() {
     let mut saga = Saga::<3>::new(ID);
     run(&mut saga, Outcome::Success);
     run(&mut saga, Outcome::Success);
@@ -280,6 +280,7 @@ fn restoring_refuses_skipped_and_stuck_states_no_saga_reaches() {
     assert!(Saga::<3>::restored(with(over, 0b010), 0).is_some());
     assert_eq!(Saga::<3>::restored(over, 0), None);
     // Stuck comes only from a stuck compensation, and issues nothing after.
+    // Only `unstick` leaves it: that state is covered in `unstick.rs`.
     let stuck = saved(Progress::Stuck(0), 3, Some((0, Compensate, Stuck, 3)));
     assert!(Saga::<3>::restored(stuck, 0).is_some());
     for unsound in [
@@ -287,11 +288,6 @@ fn restoring_refuses_skipped_and_stuck_states_no_saga_reaches() {
         saved(Progress::Stuck(0), 3, Some((0, Compensate, Failure, 3))),
         saved(Progress::Stuck(1), 3, Some((0, Compensate, Stuck, 3))),
         saved(Progress::Stuck(0), 3, None),
-        saved(
-            Progress::Compensating(0),
-            3,
-            Some((0, Compensate, Stuck, 3)),
-        ),
         saved(Progress::Aborted, 3, Some((0, Compensate, Stuck, 3))),
         saved(Progress::Forward(1), 1, Some((0, Fwd, Stuck, 1))),
         saved(Progress::Forward(1), 1, Some((0, Compensate, Skipped, 1))),

@@ -50,6 +50,7 @@ matryona_machines::symbols! {
         Busy => "busy",
         Concluded => "concluded",
         Inapplicable => "inapplicable",
+        NotStuck => "not_stuck",
     }
 }
 

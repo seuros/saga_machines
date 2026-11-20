@@ -113,6 +113,35 @@ impl Model {
         }
     }
 
+    fn unstick(&mut self) -> Result<(), Refusal> {
+        self.stuck.take().map(drop).ok_or(Refusal::NotStuck)
+    }
+
+    fn reconcile(&mut self, step: usize, kind: Kind, outcome: Outcome) -> Result<Action, Refusal> {
+        let fits = match outcome {
+            Outcome::Success | Outcome::Failure => true,
+            Outcome::Skipped => kind == Kind::Forward,
+            Outcome::Stuck => kind == Kind::Compensate,
+        };
+        if !fits {
+            return Err(Refusal::Inapplicable);
+        }
+        match self.progress() {
+            Progress::Complete | Progress::Aborted | Progress::Stuck(_) => Err(Refusal::Concluded),
+            Progress::Forward(at) if (at, Kind::Forward) == (step, kind) => self.settle(outcome),
+            Progress::Compensating(at) if (at, Kind::Compensate) == (step, kind) => {
+                self.settle(outcome)
+            }
+            Progress::Forward(_) | Progress::Compensating(_) => Err(Refusal::Mismatch),
+        }
+    }
+
+    /// Issue the action of the progress, or take the pending one, and resolve it.
+    fn settle(&mut self, outcome: Outcome) -> Result<Action, Refusal> {
+        let action = self.next_action().ok_or(Refusal::Concluded)?;
+        self.resolve(action, outcome).map(|_| action)
+    }
+
     fn agrees(&self, saga: &Saga<STEPS>) {
         assert_eq!(saga.progress(), self.progress());
         assert_eq!(saga.pending(), self.pending);
@@ -156,7 +185,7 @@ fn step(
     history: &mut Vec<Action>,
 ) {
     let before = saga.clone();
-    let unchanged = match rng.below(8) {
+    let unchanged = match rng.below(10) {
         0..=2 => {
             let had = model.pending;
             let expected = model.next_action();
@@ -189,6 +218,33 @@ fn step(
             assert_eq!(saga.cancel(), expected);
             expected != Ok(Cancellation::Cancelled)
         }
+        7 => {
+            let expected = model.unstick();
+            assert_eq!(saga.unstick(), expected);
+            expected.is_err()
+        }
+        8 => {
+            let any = usize::try_from(rng.below(STEPS as u64)).expect("small");
+            let (step, kind) = match (rng.below(4), saga.progress()) {
+                (0..=1, Progress::Forward(step)) => (step, Kind::Forward),
+                (0..=1, Progress::Compensating(step)) => (step, Kind::Compensate),
+                (2, _) => (any, Kind::Forward),
+                _ => (any, Kind::Compensate),
+            };
+            let outcome = match rng.below(8) {
+                0..=3 => Outcome::Success,
+                4 => Outcome::Failure,
+                5 | 6 => Outcome::Skipped,
+                _ => Outcome::Stuck,
+            };
+            let had = model.pending;
+            let expected = model.reconcile(step, kind, outcome);
+            assert_eq!(saga.reconcile(step, kind, outcome), expected);
+            if let (Ok(action), None) = (expected, had) {
+                history.push(action);
+            }
+            expected.is_err()
+        }
         _ => {
             // A restart: the snapshot is always sound, and drops only the
             // pending action.
@@ -209,7 +265,7 @@ fn step(
 #[test]
 fn random_runs_agree_with_the_model() {
     let mut rng = XorShift64::new(0x9E37_79B9_7F4A_7C15);
-    let (mut complete, mut aborted, mut stuck, mut skipped) = (0, 0, 0, 0);
+    let (mut complete, mut aborted, mut stuck, mut resumed, mut skipped) = (0, 0, 0, 0, 0);
     for _ in 0..400 {
         let mut saga = Saga::<STEPS>::with_scope(ID, SCOPE);
         let mut model = Model {
@@ -223,15 +279,19 @@ fn random_runs_agree_with_the_model() {
         };
         let mut history = Vec::new();
         for _ in 0..120 {
+            let was_stuck = matches!(saga.progress(), Progress::Stuck(_));
             step(&mut rng, &mut saga, &mut model, &mut history);
+            let now_stuck = matches!(saga.progress(), Progress::Stuck(_));
+            stuck += u32::from(now_stuck && !was_stuck);
+            resumed += u32::from(was_stuck && saga.progress() == model.progress() && !now_stuck);
         }
         complete += u32::from(saga.progress() == Progress::Complete);
         aborted += u32::from(saga.progress() == Progress::Aborted);
-        stuck += u32::from(matches!(saga.progress(), Progress::Stuck(_)));
         skipped += u32::from(saga.skipped() != 0);
     }
     assert!(
-        complete > 0 && aborted > 0 && stuck > 0 && skipped > 0,
-        "{complete} complete, {aborted} aborted, {stuck} stuck, {skipped} skipping"
+        complete > 0 && aborted > 0 && stuck > 0 && resumed > 0 && skipped > 0,
+        "{complete} complete, {aborted} aborted, {stuck} stuck, {resumed} resumed, \
+         {skipped} skipping"
     );
 }

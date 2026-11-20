@@ -31,6 +31,8 @@ fn init(ruby: &Ruby) -> Result<(), Error> {
     class.define_private_method("native_snapshot", method!(Wrapper::snapshot, 0))?;
     class.define_private_method("native_pending", method!(Wrapper::pending, 0))?;
     class.define_method("cancel", method!(Wrapper::cancel, 0))?;
+    class.define_method("unstick", method!(Wrapper::unstick, 0))?;
+    class.define_method("reconcile", method!(Wrapper::reconcile, 3))?;
     class.define_method("steps", method!(Wrapper::steps, 0))?;
     // `native_with_scope` and `native_restored` answer a Saga: its class is
     // fixed now, so building one never runs `Object.const_get`.

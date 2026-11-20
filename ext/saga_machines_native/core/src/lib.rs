@@ -28,7 +28,8 @@ pub enum Progress {
     /// All required compensations finished.
     Aborted,
     /// The compensation of this step was reported [`Outcome::Stuck`]: nothing
-    /// more is issued and the saga is parked for the caller. Terminal.
+    /// more is issued and the saga is parked for the caller, until
+    /// [`Saga::unstick`] resumes the compensation.
     Stuck(usize),
 }
 
@@ -107,6 +108,9 @@ impl<const N: usize> Saga<N> {
     /// under a fresh attempt. The last settlement is carried over, so a
     /// repeat of it is still honoured.
     ///
+    /// A saved [`Progress::Stuck`] is restored as it was and can be resumed
+    /// with [`Saga::unstick`], however long it stayed parked.
+    ///
     /// `Some` for exactly the snapshots a saga of `N` steps in `scope` can
     /// produce, and `None` for every other. A snapshot is one of those when:
     ///
@@ -120,7 +124,8 @@ impl<const N: usize> Saga<N> {
     ///   attempts lost to a restart take numbers too, so there is no upper
     ///   bound;
     /// - the progress is where the settlement leads (the start, without
-    ///   one), or the cancel of that;
+    ///   one), or the cancel of that, or the retry of a stuck compensation
+    ///   (`Compensating(step)` after a stuck settlement of `step`);
     /// - `issued` is exactly the settled attempt's sequence number when the
     ///   settlement itself completed or aborted the saga: nothing is issued
     ///   after it. A saga a cancel aborted before its first settlement may
@@ -204,7 +209,8 @@ impl<const N: usize> Saga<N> {
     /// The next piece of work: a drain over the workflow.
     ///
     /// `Ok(None)` once the saga is [`Progress::Complete`],
-    /// [`Progress::Aborted`] or [`Progress::Stuck`]: nothing is left. While
+    /// [`Progress::Aborted`] or [`Progress::Stuck`]: nothing is left (a stuck
+    /// saga issues again once [`Saga::unstick`] resumes it). While
     /// an action is pending, the call is an idempotent repeat: it answers
     /// that same action, same attempt, and changes nothing. Otherwise it
     /// issues a fresh attempt for the step the progress points at. A step
@@ -312,6 +318,85 @@ impl<const N: usize> Saga<N> {
                 Ok(Cancellation::Cancelled)
             }
         }
+    }
+
+    /// Resume the compensation a stuck saga was parked at.
+    ///
+    /// The progress turns from `Progress::Stuck(step)` back to
+    /// `Progress::Compensating(step)`; the next [`Saga::next_action`]
+    /// issues a fresh attempt for that step. The stuck settlement stays the
+    /// last settlement, so a repeat of it is still the idempotent
+    /// [`Resolution::AlreadyResolved`] and changes nothing; an attempt of
+    /// the parked compensation can never resolve the new one. Nothing is
+    /// issued here, and a snapshot of a stuck saga, saved and restored,
+    /// resumes the same way.
+    ///
+    /// # Errors
+    /// [`Refusal::NotStuck`] unless the saga is [`Progress::Stuck`], a
+    /// saga already resumed included.
+    pub const fn unstick(&mut self) -> Result<(), Refusal> {
+        match self.progress {
+            Progress::Stuck(step) => {
+                self.progress = Progress::Compensating(step);
+                Ok(())
+            }
+            Progress::Forward(_)
+            | Progress::Compensating(_)
+            | Progress::Complete
+            | Progress::Aborted => Err(Refusal::NotStuck),
+        }
+    }
+
+    /// Record the known outcome of the step the saga is on, without a
+    /// fresh action: the way to settle in-flight work after a restart.
+    ///
+    /// A snapshot never holds the pending action, so a restored saga cannot
+    /// be told what happened to work that was running when the process died.
+    /// The caller finds out in the real world (the effect is idempotent by
+    /// its [`ActionKey`]) and reports it here as `outcome` of `kind` work on
+    /// `step`. The call is [`Saga::next_action`] followed by
+    /// [`Saga::resolve`] of that action, in one honoured step: the pending
+    /// action is the one settled if there is one, otherwise a fresh attempt
+    /// is issued and settled at once. Either way the progress advances as
+    /// resolving it does, [`Outcome::Skipped`] and [`Outcome::Stuck`]
+    /// included, and the settled action is returned.
+    ///
+    /// Only the work the progress points at can be in flight: `kind` is
+    /// [`Kind::Forward`] on `Progress::Forward(step)` and
+    /// [`Kind::Compensate`] on `Progress::Compensating(step)`. Nothing
+    /// can be in flight on a saga that is complete, aborted or stuck.
+    ///
+    /// # Errors
+    /// In this order: [`Refusal::Inapplicable`] for an outcome that cannot
+    /// answer `kind`; [`Refusal::Concluded`] for a complete, aborted or
+    /// stuck saga; [`Refusal::Mismatch`] when `step` and `kind` are not the
+    /// work the progress points at; [`Refusal::Exhausted`] when a fresh
+    /// attempt is needed and every attempt of the scope has been issued.
+    pub fn reconcile(
+        &mut self,
+        step: usize,
+        kind: Kind,
+        outcome: Outcome,
+    ) -> Result<Action, Refusal> {
+        if !outcome.applies_to(kind) {
+            return Err(Refusal::Inapplicable);
+        }
+        match (self.progress, kind) {
+            (Progress::Forward(at), Kind::Forward)
+            | (Progress::Compensating(at), Kind::Compensate)
+                if at == step => {}
+            (Progress::Forward(_) | Progress::Compensating(_), _) => return Err(Refusal::Mismatch),
+            (Progress::Complete | Progress::Aborted | Progress::Stuck(_), _) => {
+                return Err(Refusal::Concluded);
+            }
+        }
+        let mut issuing = self.clone();
+        let Some(action) = issuing.next_action()? else {
+            return Err(Refusal::Concluded);
+        };
+        issuing.resolve(action, outcome)?;
+        *self = issuing;
+        Ok(action)
     }
 }
 

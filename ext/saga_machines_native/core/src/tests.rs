@@ -10,8 +10,10 @@ mod outcomes;
 #[cfg(feature = "serde")]
 mod persisted;
 mod reachable;
+mod reconcile;
 mod refusals;
 mod restore;
+mod unstick;
 
 const ID: SagaId = SagaId::from_raw(7);
 
@@ -215,6 +217,7 @@ fn refusals_format_and_are_errors() {
         Refusal::Busy,
         Refusal::Concluded,
         Refusal::Inapplicable,
+        Refusal::NotStuck,
     ];
     for (index, refusal) in all.iter().enumerate() {
         let error: &dyn core::error::Error = refusal;

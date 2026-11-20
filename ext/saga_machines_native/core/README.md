@@ -65,6 +65,8 @@ issued count; the saga equals a clone taken before the call.
 | `next_action()` | `Some(Action)`; `None` once complete or aborted | `Exhausted` |
 | `resolve(action, outcome)` | `Resolved`, `AlreadyResolved` | `Stale`, `Inapplicable`, `Mismatch` |
 | `cancel()` | `Cancelled`, `AlreadyUnwinding` | `Concluded`, `Busy` |
+| `unstick()` | `()`: `Stuck(step)` becomes `Compensating(step)` | `NotStuck` |
+| `reconcile(step, kind, outcome)` | the settled `Action` | `Inapplicable`, `Concluded`, `Mismatch`, `Exhausted` |
 | `Action::claim_in(ledger, now, ttl)` | the ledger's `Claim` | the ledger's `LedgerRefusal` |
 | `Saga::restored(snapshot, scope)` | `Some(Saga)` | `None` for unsound saved state |
 | `AttemptId::from_raw(raw)` | `Some(AttemptId)` | `None` for a sequence of zero |
@@ -79,11 +81,15 @@ whatever the time.
   before anything is looked up), or it is an earlier attempt that is neither
   pending nor the last one resolved.
 - `Mismatch`: the attempt is the pending one under another key, or the last
-  settled one under another key or with another outcome. The record stands.
+  settled one under another key or with another outcome; for `reconcile`, a
+  step or kind other than the one the progress points at. The record stands.
 - `Busy`: a forward action is unresolved, so the saga cannot be cancelled.
 - `Inapplicable`: the outcome cannot answer that kind of action, see
   Outcomes below.
-- `Concluded`: the saga is complete or stuck and cannot be cancelled.
+- `Concluded`: the saga is complete or stuck and cannot be cancelled; for
+  `reconcile`, also aborted: nothing can be in flight.
+- `NotStuck`: `unstick` on a saga that is not `Progress::Stuck`, one already
+  resumed included.
 
 `resolve` checks in this order: `Stale` (never issued), `Inapplicable`,
 `Mismatch`, `Stale` (issued, but no longer current). `Inapplicable` depends
@@ -97,7 +103,7 @@ attempt, once the attempt is known to be this saga's.
 | `Success` | either kind | forward: next step, or `Complete`; compensation: next unwind step, or `Aborted` |
 | `Failure` | either kind | forward: start the unwind; compensation: same step, fresh attempt |
 | `Skipped` | forward only | as `Success`; the step is recorded as skipped |
-| `Stuck` | compensation only | `Progress::Stuck(step)`, terminal |
+| `Stuck` | compensation only | `Progress::Stuck(step)`, parked until `unstick` |
 
 `Outcome::applies_to(kind)` answers which pairs are valid. A `Skipped`
 compensation or a `Stuck` forward action is `Inapplicable`.
@@ -116,13 +122,39 @@ attempt as usual, and the step is issued again under a fresh attempt.
 
 *Stuck.* A compensation that cannot be completed and must not be retried
 forever: the caller parks the work (marks the resource leaked, pages someone).
-`Progress::Stuck(step)` is terminal: no pending action, `next_action` answers
-`Ok(None)`, `cancel` is `Concluded`, and every reply is refused except the
-repeat of the stuck one, which is `AlreadyResolved`. It is in the snapshot,
-and `Saga::restored` accepts it only straight after a stuck compensation
-settlement, with nothing issued since. The steps that were never compensated
-are the caller's to read: `Stuck(step)` is the step that could not be undone,
-and every lower step that ran is still done.
+`Progress::Stuck(step)` parks the saga: no pending action, `next_action`
+answers `Ok(None)`, `cancel` is `Concluded`, and every reply is refused except
+the repeat of the stuck one, which is `AlreadyResolved`. It is in the
+snapshot, and `Saga::restored` accepts it only straight after a stuck
+compensation settlement, with nothing issued since. The steps that were never
+compensated are the caller's to read: `Stuck(step)` is the step that could not
+be undone, and every lower step that ran is still done.
+
+*Unstick.* Once the cause is fixed, `unstick()` takes `Stuck(step)` back to
+`Compensating(step)`; the next `next_action` issues a fresh attempt for that
+step. The call issues nothing and any other progress is `NotStuck`. The stuck
+settlement stays the last one: its repeat is still `AlreadyResolved` and any
+other outcome for it `Mismatch`, and once the retry settles it is `Stale`, so
+the parked attempt can never resolve the retry. A stuck snapshot, saved
+long ago, restores as stuck and is resumed the same way. How often to retry
+before reporting `Stuck` again is the caller's policy: the saga keeps no
+compensation attempt count.
+
+*Reconcile.* A snapshot never holds the pending action, so after a restart
+the saga cannot be told what happened to work that was running when the
+process died. The caller finds out in the real world, keyed by the
+`ActionKey`, and reports it: `reconcile(step, kind, outcome)` is
+`next_action` followed by `resolve` of that action, in one call. The pending
+action is the one settled if there is one, otherwise a fresh attempt is issued
+and settled at once; the settled action is returned and is the last
+settlement. Only the work the progress points at can be in flight: `kind` is
+`Forward` on `Forward(step)` and `Compensate` on `Compensating(step)`, else
+`Mismatch`; `Inapplicable` comes first for an outcome that cannot answer
+`kind`, and `Concluded` for a complete, aborted or stuck saga. Skipped
+and stuck outcomes follow the rules above, so a reconciled `Skipped` step is
+never compensated. The attempt of the lost action stays `Stale`. It reaches
+no state `next_action` and `resolve` do not, so `Saga::restored` needs no new
+rule for it.
 
 **Repeats.** Only what the saga can prove is honoured, and a repeat changes
 nothing.

@@ -58,6 +58,25 @@ pub(super) fn walk<const N: usize>() -> Vec<Saga<N>> {
         if cancelling.cancel().is_ok() {
             queue.push(cancelling);
         }
+        let mut resuming = saga.clone();
+        if resuming.unstick().is_ok() {
+            queue.push(resuming);
+        }
+        // Reconciling is issuing and resolving at once: no state of its own.
+        for outcome in OUTCOMES {
+            let mut reconciling = saga.clone();
+            let on = match saga.progress() {
+                Progress::Forward(step) => Some((step, Kind::Forward)),
+                Progress::Compensating(step) => Some((step, Kind::Compensate)),
+                Progress::Complete | Progress::Aborted | Progress::Stuck(_) => None,
+            };
+            if let Some((step, kind)) = on.filter(|&(_, kind)| outcome.applies_to(kind))
+                && reconciling.issued() < ISSUED_MAX + 1
+            {
+                assert!(reconciling.reconcile(step, kind, outcome).is_ok());
+                queue.push(reconciling);
+            }
+        }
         // A restart: every state a saga saves is one it can be restored from.
         let restarted = Saga::<N>::restored(saga.snapshot(), SCOPE);
         queue.push(restarted.unwrap_or_else(|| panic!("false reject: {saga:?}")));

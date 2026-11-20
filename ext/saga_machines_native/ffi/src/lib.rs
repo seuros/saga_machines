@@ -9,7 +9,9 @@ use std::cell::RefCell;
 
 use magnus::{Error, IntoValue, Ruby, Value, prelude::*, typed_data::Obj};
 use matryona_machines::ruby::{Symbols, bytes, integer, keep, symbol};
-use saga_machines::{Action, Cancellation, Outcome, Refusal, Resolution, Saga, SagaId, Snapshot};
+use saga_machines::{
+    Action, Cancellation, Kind, Outcome, Refusal, Resolution, Saga, SagaId, Snapshot,
+};
 
 use classes::classes;
 
@@ -22,6 +24,8 @@ trait Policy: Send {
     fn next_action(&mut self) -> Result<Option<Action>, Refusal>;
     fn resolve(&mut self, action: Action, outcome: Outcome) -> Result<Resolution, Refusal>;
     fn cancel(&mut self) -> Result<Cancellation, Refusal>;
+    fn unstick(&mut self) -> Result<(), Refusal>;
+    fn reconcile(&mut self, step: usize, kind: Kind, outcome: Outcome) -> Result<Action, Refusal>;
     fn snapshot(&self) -> Snapshot;
     fn pending(&self) -> Option<Action>;
     fn steps(&self) -> usize;
@@ -37,6 +41,12 @@ impl<const N: usize> Policy for Saga<N> {
     }
     fn cancel(&mut self) -> Result<Cancellation, Refusal> {
         self.cancel()
+    }
+    fn unstick(&mut self) -> Result<(), Refusal> {
+        self.unstick()
+    }
+    fn reconcile(&mut self, step: usize, kind: Kind, outcome: Outcome) -> Result<Action, Refusal> {
+        self.reconcile(step, kind, outcome)
     }
     fn snapshot(&self) -> Snapshot {
         self.snapshot()
@@ -189,6 +199,41 @@ impl Wrapper {
             Ok(cancellation) => named(ruby, names::cancellation(cancellation)),
             Err(why) => names::Refusals::symbol(ruby, why).as_value(),
         })
+    }
+
+    fn unstick(ruby: &Ruby, this: Obj<Self>) -> Result<Value, Error> {
+        this.check_frozen()?;
+        let answer = this.core.borrow_mut().0.unstick();
+        Ok(match answer {
+            Ok(()) => named(ruby, "unstuck"),
+            Err(why) => names::Refusals::symbol(ruby, why).as_value(),
+        })
+    }
+
+    /// The settled `Action`, or a refusal symbol. Decided on a copy and kept
+    /// once the `Action` is built, as `next_action` is.
+    fn reconcile(
+        ruby: &Ruby,
+        this: Obj<Self>,
+        step: Value,
+        kind: Value,
+        outcome: Value,
+    ) -> Result<Value, Error> {
+        this.check_frozen()?;
+        let classes = classes(ruby)?;
+        let step = names::step(step)?;
+        let kind = names::Kinds::parse(ruby, kind)?;
+        let outcome = names::Outcomes::parse(ruby, outcome)?;
+        keep(
+            ruby,
+            this,
+            &this.core,
+            |core| core.0.reconcile(step, kind, outcome),
+            |settled| match settled {
+                Ok(action) => hooks::action(ruby, classes, action),
+                Err(why) => Ok(names::Refusals::symbol(ruby, why).as_value()),
+            },
+        )
     }
 
     /// The core `Snapshot`, field by field in its order.

@@ -289,11 +289,11 @@ pub fn sound<const N: usize>(snapshot: &Snapshot, attempts: &Issuer) -> bool {
     }
     // Reached by a cancel after the settlement. A cancel is honoured only
     // while going forward, so attempts may have been issued, and lost to a
-    // restart, before it, even when it aborts the saga outright.
+    // restart, before it, even when it aborts the saga outright. A stuck
+    // compensation is resumed in place: nothing is issued between.
     match after {
         Progress::Forward(step) => snapshot.progress == unwound(step, snapshot.skipped),
-        Progress::Compensating(_) | Progress::Complete | Progress::Aborted | Progress::Stuck(_) => {
-            false
-        }
+        Progress::Stuck(step) => snapshot.progress == Progress::Compensating(step),
+        Progress::Compensating(_) | Progress::Complete | Progress::Aborted => false,
     }
 }

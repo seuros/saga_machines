@@ -186,3 +186,76 @@ fn a_stuck_saga_persists_as_stuck() {
     assert_eq!(read::<Outcome>(r#""Skipped""#), Some(Outcome::Skipped));
     assert_eq!(read::<Outcome>(r#""Stuck""#), Some(Outcome::Stuck));
 }
+
+#[test]
+fn a_stuck_snapshot_read_from_storage_is_retried_later() {
+    let mut saga = Saga::<3>::with_scope(ID, 3);
+    run(&mut saga, Outcome::Success);
+    run(&mut saga, Outcome::Success);
+    run(&mut saga, Outcome::Failure);
+    run(&mut saga, Outcome::Failure);
+    let undo = run(&mut saga, Outcome::Stuck);
+    let json = stored(&saga.snapshot());
+    assert!(json.contains(r#""progress":{"Stuck":1}"#), "{json}");
+    // The record sits parked, the process is gone, the operator fixes the cause.
+    let snapshot: Snapshot = read(&json).expect("a stuck snapshot reads back");
+    assert_eq!(snapshot.progress(), Progress::Stuck(1));
+    let mut saga = Saga::<3>::restored(snapshot, 3).expect("a stuck snapshot restores");
+    assert_eq!(saga.unstick(), Ok(()));
+    // The resumed state persists too, before and after an attempt is issued.
+    saga = through_storage(&saga, 3);
+    assert_eq!(saga.progress(), Progress::Compensating(1));
+    let retry = next(&mut saga);
+    assert_eq!(retry.key(), undo.key());
+    assert_eq!(retry.attempt().raw(), undo.attempt().raw() + 1);
+    saga = through_storage(&saga, 3);
+    assert_eq!(saga.pending(), None);
+    refuses(&mut saga, Refusal::Stale, |saga| {
+        saga.resolve(retry, Outcome::Success)
+    });
+    let retry = next(&mut saga);
+    assert_eq!(
+        saga.resolve(retry, Outcome::Success),
+        Ok(Resolution::Resolved)
+    );
+    run(&mut saga, Outcome::Success);
+    assert_eq!(saga.progress(), Progress::Aborted);
+}
+
+#[test]
+fn a_kill_mid_flight_is_reconciled_from_storage_to_completion_and_to_compensation() {
+    let in_flight = |outcomes: &[Outcome]| {
+        let mut saga = Saga::<3>::with_scope(ID, 3);
+        for outcome in outcomes {
+            saga = through_storage(&saga, 3);
+            run(&mut saga, *outcome);
+        }
+        saga = through_storage(&saga, 3);
+        let action = next(&mut saga);
+        // Killed with the effect running: only the stored snapshot survives.
+        let revived = through_storage(&saga, 3);
+        assert_eq!(revived.pending(), None);
+        (revived, action)
+    };
+    let (mut saga, action) = in_flight(&[Outcome::Success, Outcome::Success]);
+    let settled = saga
+        .reconcile(action.step(), action.kind(), Outcome::Success)
+        .expect("in flight");
+    assert_eq!(settled.key(), action.key());
+    saga = through_storage(&saga, 3);
+    assert_eq!(saga.progress(), Progress::Complete);
+
+    let (mut saga, action) = in_flight(&[Outcome::Success, Outcome::Success]);
+    saga.reconcile(action.step(), action.kind(), Outcome::Failure)
+        .expect("in flight");
+    let mut undone = std::vec::Vec::new();
+    while let Some(action) = saga.next_action().expect("not exhausted") {
+        undone.push((action.step(), action.kind()));
+        saga = through_storage(&saga, 3);
+        saga.reconcile(action.step(), action.kind(), Outcome::Success)
+            .expect("in flight");
+        saga = through_storage(&saga, 3);
+    }
+    assert_eq!(undone, [(1, Kind::Compensate), (0, Kind::Compensate)]);
+    assert_eq!(saga.progress(), Progress::Aborted);
+}

@@ -14,17 +14,23 @@ pub enum Refusal {
     Stale,
     /// The attempt is the pending one or the last one resolved, but the call
     /// disagrees with what the saga recorded for it: another action key, or,
-    /// for a repeat, another outcome. The record stands.
+    /// for a repeat, another outcome. Also a reconcile that names another step
+    /// or kind than the one the saga is on. The record stands.
     Mismatch,
     /// A forward action is unresolved; its effect cannot be forgotten, so the
     /// saga cannot be cancelled until it is resolved.
     Busy,
     /// The saga is finished going anywhere: every forward step went through,
-    /// or a compensation is stuck. It cannot be cancelled.
+    /// or a compensation is stuck. It cannot be cancelled. A reconcile is
+    /// also refused here once nothing can be in flight (complete, aborted or
+    /// stuck).
     Concluded,
     /// The outcome cannot answer this kind of action: `Skipped` answers only
     /// a forward action, `Stuck` only a compensation.
     Inapplicable,
+    /// The saga is not [`Progress::Stuck`](crate::Progress::Stuck): there is
+    /// no parked compensation to retry.
+    NotStuck,
 }
 
 impl fmt::Display for Refusal {
@@ -36,6 +42,7 @@ impl fmt::Display for Refusal {
             Self::Busy => "a forward action is unresolved",
             Self::Concluded => "the saga is complete or stuck",
             Self::Inapplicable => "the outcome does not apply to this kind of action",
+            Self::NotStuck => "the saga is not stuck",
         })
     }
 }
