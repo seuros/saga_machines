@@ -120,13 +120,13 @@ module SagaMachines
     # Every refusal symbol, one per core `Refusal` variant, no catch-all. A
     # refused call changed nothing. Each method below lists exactly the ones
     # it can answer.
-    type refusal = :exhausted | :stale | :mismatch | :busy | :concluded | :inapplicable
+    type refusal = :exhausted | :stale | :mismatch | :busy | :concluded | :inapplicable | :not_stuck
 
     # Ids, steps, counts and raw attempts are Integers; a non-Integer raises
     # TypeError, a negative or too large one RangeError. A value of the wrong
     # class where a Data is expected raises TypeError; an unknown kind,
     # outcome or progress symbol raises RangeError. A frozen saga raises
-    # FrozenError on next_action, resolve and cancel.
+    # FrozenError on next_action, resolve, cancel, unstick and reconcile.
 
     # A fresh saga of `steps` steps in scope zero. `steps` is one of STEPS
     # (RangeError otherwise); zero steps is already :complete.
@@ -137,7 +137,8 @@ module SagaMachines
     def self.with_scope: (Integer steps, SagaId id, Integer scope) -> Saga
     # The saga of `scope` saved in `snapshot`, continuing its attempt
     # sequence. The pending action is not saved: it is :stale afterwards and
-    # its key is issued again under a fresh attempt. Raises RangeError where
+    # its key is issued again under a fresh attempt, or the work is settled
+    # with #reconcile. A stuck snapshot restores as stuck. Raises RangeError where
     # the core answers None, which is for every snapshot no saga of `steps`
     # steps in `scope` can produce: another scope, an `issued` past 2**48-1,
     # a progress that does not fit `steps`, a settlement that is not this
@@ -200,6 +201,27 @@ module SagaMachines
     # nothing). :concluded for a complete or stuck saga; :busy while a forward action
     # is unresolved.
     def cancel: () -> (:cancelled | :already_unwinding | :concluded | :busy)
+    # Resume the compensation a stuck saga was parked at: :unstuck turns
+    # Stuck(step) back to Compensating(step), and the next #next_action
+    # issues a fresh attempt for that step. Nothing is issued by the call.
+    # The stuck settlement stays the last one, so its repeat is still
+    # :already_resolved; once the retry settles it is :stale. A snapshot of a
+    # stuck saga restores as stuck and resumes the same way. :not_stuck for
+    # any other saga, one already resumed included.
+    def unstick: () -> (:unstuck | :not_stuck)
+    # Record the known outcome of the work the saga is on without issuing a
+    # fresh action: how to settle a step that was in flight when the process
+    # died, after finding out in the real world. It is #next_action then
+    # #resolve in one honoured call: the pending action is the one settled,
+    # else a fresh attempt is issued and settled at once. Returns the settled
+    # Action. `kind` is :forward on a Forward(step) saga and :compensate on a
+    # Compensating(step) one; the progress advances as #resolve would.
+    # In order: :inapplicable for an outcome that cannot answer `kind`;
+    # :concluded when nothing can be in flight (complete, aborted, stuck);
+    # :mismatch for another step or kind than the one the saga is on;
+    # :exhausted when a fresh attempt is needed and none is left.
+    def reconcile: (Integer step, kind kind, outcome outcome)
+                   -> (Action | :inapplicable | :concluded | :mismatch | :exhausted)
 
     private
 

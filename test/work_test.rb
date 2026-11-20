@@ -68,6 +68,9 @@ class WorkTest < Minitest::Test
       assert_raises(FrozenError) { saga.next_action }
       assert_raises(FrozenError) { saga.resolve(action, :success) }
       assert_raises(FrozenError) { saga.cancel }
+      assert_raises(FrozenError) { saga.unstick }
+      assert_raises(FrozenError) { saga.reconcile(0, :forward, :success) }
+      assert_raises(FrozenError) { saga.reconcile(nil, :forward, :success) }
     end
   end
 end

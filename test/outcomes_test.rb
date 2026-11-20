@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 require_relative 'test_helper'
 
-# :skipped is done without effect and never compensated; :stuck parks a saga.
+# :skipped is done without effect and never compensated; :stuck parks a saga
+# until #unstick.
 class OutcomesTest < Minitest::Test
   include SagaHelpers
 
@@ -41,7 +42,7 @@ class OutcomesTest < Minitest::Test
     end
   end
 
-  def test_a_stuck_compensation_is_terminal_and_survives_a_restart
+  def test_a_stuck_compensation_parks_the_saga_and_survives_a_restart
     saga = Saga.new(2, ID)
     run_step(saga, :success)
     run_step(saga, :failure)

@@ -208,7 +208,17 @@ saga.cancel                  # => :concluded
 saga.resolve(undo, :stuck)   # => :already_resolved
 ```
 
-`Stuck(step)` is terminal and in the snapshot, so a restart finds it still stuck. Marking the resource leaked and paging someone is your job.
+`Stuck(step)` is in the snapshot, so a restart finds it still stuck. Marking the resource leaked and paging someone is your job.
+
+Once the cause is fixed, resume it:
+
+```ruby
+saga.unstick       # => :unstuck, Stuck(step) is Compensating(step) again
+saga.unstick       # => :not_stuck, it is not stuck anymore
+saga.next_action   # => the same key, under a fresh attempt
+```
+
+A stuck snapshot restores as stuck, even weeks later, and `unstick` works on the restored saga. The parked attempt can't resolve the retry: repeated it's `:already_resolved` (a no-op) until the retry settles, then `:stale`. How many retries you allow before saying `:stuck` again is your policy; the saga doesn't count them.
 
 ### Changing your mind
 
@@ -269,6 +279,19 @@ saga = SagaMachines::Saga.restored(3, saved, 7)   # => a Saga, or RangeError
 
 `restored` takes the scope explicitly and raises `RangeError` for a snapshot of another scope, or one no saga of that many steps could have reached. That check is exact, not a sniff test: the settled attempt can't be numbered lower than the tries that had to come before it (step 0's compensation is never attempt 1), and a saga that finished on a settlement has issued nothing since, so its `issued` is that attempt's number and not one more. The pending action is not in the snapshot: after a restart it's `:stale`, and `next_action` issues the same `key` under a fresh attempt. Whether the effect already ran is for your dedup ledger to say, which is exactly why the key didn't change. The last settlement is in the snapshot, so a redelivered reply to it is still `:already_resolved`. If you can't save the snapshot, start each incarnation in a scope no earlier one used.
 
+### Killed mid-step
+
+The progress says which step was in flight when the process died. Find out what really happened (your dedup ledger, or a probe of the world), then report it without issuing anything:
+
+```ruby
+saga = SagaMachines::Saga.restored(3, saved, 7)
+saga.progress                                 # => Forward(1): step 1 may have run
+saga.reconcile(1, :forward, :success)         # => the settled Action, saga is on Forward(2)
+saga.reconcile(1, :forward, :failure)         # (instead) the effect never happened: unwind
+```
+
+`reconcile(step, kind, outcome)` is `next_action` plus `resolve` in one call, and the progress advances exactly as `resolve` would, `:skipped` and `:stuck` included. It only accepts the work the saga is on: `:mismatch` for another step or kind, `:inapplicable` for an outcome that can't answer the kind, `:concluded` once nothing can be in flight (complete, aborted or stuck). The action it settles is returned and becomes the last settlement. The attempt of the work that was lost stays `:stale`.
+
 ## Every answer
 
 Honoured answers say what happened. Refusals are symbols, one per reason, and a refused call changed nothing: not the progress, not the pending action, not the count.
@@ -278,6 +301,8 @@ Honoured answers say what happened. Refusals are symbols, one per reason, and a 
 | `next_action` | an `Action`; `nil` once `:complete`, `:aborted` or stuck | `:exhausted` |
 | `resolve(action, outcome)` | `:resolved`, `:already_resolved` | `:stale`, `:inapplicable`, `:mismatch` |
 | `cancel` | `:cancelled`, `:already_unwinding` | `:concluded`, `:busy` |
+| `unstick` | `:unstuck` | `:not_stuck` |
+| `reconcile(step, kind, outcome)` | the settled `Action` | `:inapplicable`, `:concluded`, `:mismatch`, `:exhausted` |
 | `progress` | `Forward(step)`, `Compensating(step)`, `Stuck(step)`, `:complete`, `:aborted` | |
 | `pending` | an `Action` or `nil` | |
 | `settled` | a `Settlement(action, outcome)` or `nil` | |
@@ -292,10 +317,11 @@ What each refusal means:
 
 - `:exhausted`: there's work left, but the scope's 2**48-1 attempts are spent. Not the same as `nil`, which means the journey is over.
 - `:stale`: the attempt isn't one this saga can act on. It carries another scope or was never issued (answered before anything is looked up), or it's an earlier attempt that is neither pending nor the last one resolved.
-- `:mismatch`: the attempt is the pending one or the last one resolved, but the action's key or the outcome isn't what the saga recorded. The record stands.
+- `:mismatch`: the attempt is the pending one or the last one resolved, but the action's key or the outcome isn't what the saga recorded; for `reconcile`, a step or kind other than the one the saga is on. The record stands.
 - `:busy`: a forward action is unresolved, so there's no cancelling yet.
 - `:inapplicable`: `:skipped` on a compensation, or `:stuck` on a forward action. Answered right after the never-issued `:stale` check, whatever the attempt.
-- `:concluded`: the saga is `:complete` or stuck. There's nothing to cancel.
+- `:concluded`: the saga is `:complete` or stuck. There's nothing to cancel. For `reconcile`, also `:aborted`: nothing can be in flight.
+- `:not_stuck`: `unstick` on a saga that isn't stuck, one already resumed included.
 
 Repeats that are honoured, because the saga can prove them:
 
